@@ -1,0 +1,32 @@
+# Environment
+.env
+.env.local
+**/.env
+**/.env.local
+
+# Postgres / runtime local
+**/data/
+
+# Binaries / build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+bin/
+pkg/
+vendor/
+node_modules/
+.venv/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
