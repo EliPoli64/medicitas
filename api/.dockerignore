@@ -1,0 +1,10 @@
+# Artefactos y archivos que no deben entrar al contexto de build de la API.
+
+*_test.go
+.env
+.env.*
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore

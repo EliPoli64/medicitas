@@ -1,0 +1,96 @@
+# Esqueleto de Docker Compose para MediCitas (spec.md, sección 6).
+#
+# Servicios previstos: aplicación, PostgreSQL, Keycloak y Redis.
+# Todavía no hay esquema, realm, caché ni API implementados: este archivo
+# solo deja la estructura y las dependencias listas para completar.
+#
+# TODO al cerrar el diseño:
+#   - agregar el servicio de migraciones/semilla;
+#   - versionar el realm de Keycloak en id-provider/import/;
+#   - definir variables y políticas de Redis;
+#   - verificar que `docker compose up` deje el sistema operativo y poblado.
+
+services:
+  db:
+    build: ./db
+    env_file: [.env]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  keycloak:
+    build: ./id-provider
+    command: start-dev --import-realm
+    env_file: [.env]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: db
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: ${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HTTP_PORT: ${KC_HTTP_PORT:-6767}
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+    ports:
+      - "${KC_HTTP_PORT:-6767}:${KC_HTTP_PORT:-6767}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec bash -c 'exec 3<>/dev/tcp/localhost/9000 && printf \"GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && read -r status <&3 && [[ \"$$status\" == *200* ]]'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./api
+    env_file: [.env]
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: ${API_PORT:-8080}
+    ports:
+      - "${API_PORT:-8080}:${API_PORT:-8080}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+volumes:
+  pgdata:

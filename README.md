@@ -8,9 +8,24 @@ Enunciado del curso: [`spec.md`](spec.md).
 
 ## Estado actual
 
-- Repo del grupo (`EliPoli64/medicitas`) con la spec (Elías) y esta propuesta de docs de Fundación.
-- **Pendiente de acordar en el grupo:** lenguaje de la API y qué traemos de la Tarea Corta 1.
-- Recomendación inicial: **Go**, para no reescribir auth/Compose/JWT desde cero. Si preferimos otra cosa (p. ej. Ruby), también se discute — ver abajo qué sí vale la pena copiar en cualquier caso.
+- Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
+- **Sin implementación todavía:** los archivos de `api/`, `db/` e `id-provider/` son puntos de partida limpios; no contienen el dominio de la Tarea Corta 1 (`reservas`) ni configuración de ese proyecto.
+- **Pendiente de acordar en el grupo:** lenguaje definitivo de la API y qué traemos de la Tarea Corta 1.
+- El esqueleto actual de `api/` está en **Go** como punto de partida, siguiendo la recomendación inicial. Si el grupo elige otro lenguaje, se reemplaza esa carpeta.
+
+## Estructura del repositorio
+
+```text
+.
+├── api/                  # Esqueleto de la API (main, auth, Dockerfile, go.mod)
+├── db/                   # Imagen de PostgreSQL y carpeta de migraciones vacía
+├── id-provider/          # Imagen de Keycloak y carpeta de import del realm
+├── docs/                 # Modelo de datos, multi-tenancy y división del trabajo
+├── docker-compose.yml    # Esqueleto con api + db + keycloak + redis
+├── .env.example          # Variables de entorno de ejemplo
+├── .gitignore
+└── spec.md               # Enunciado del curso
+```
 
 ## Propuesta de división (a confirmar)
 
@@ -26,7 +41,7 @@ Módulo extra (grupos de 3): elegir **uno**. Candidato propuesto: **RLS como seg
 
 ## Qué traer de la Tarea Corta 1 (a decidir)
 
-No copié el código de TC1 a este repo a propósito. Propongo que el grupo revise y diga qué sí metemos.
+El repo quedó limpio del código de TC1 a propósito. Propongo que el grupo revise y diga qué sí metemos.
 
 ### Vale la pena traer (adaptar, no pegar ciego)
 
@@ -55,7 +70,7 @@ No copié el código de TC1 a este repo a propósito. Propongo que el grupo revi
 
 Igual conviene traer Compose, Keycloak/realm (adaptado), migraciones SQL nuevas y la idea de health/ready. Lo que no se reutiliza: binario Go, `auth.go`, Dockerfiles de la API.
 
-## Documentación en este PR/commit
+## Documentación de trabajo
 
 | Documento | Contenido |
 |-----------|-----------|

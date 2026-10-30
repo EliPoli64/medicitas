@@ -1,0 +1,17 @@
+# Archivos que no deben entrar en contextos de build de Docker.
+
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+data/
+tmp/
+coverage/
+node_modules/
+vendor/
+.venv/
+venv/
+__pycache__/
+*.log
+README.md
