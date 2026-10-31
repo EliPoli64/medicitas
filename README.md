@@ -75,6 +75,7 @@ Igual conviene traer Compose, Keycloak/realm (adaptado), migraciones SQL nuevas 
 | Documento | Contenido |
 |-----------|-----------|
 | [`docs/modelo-datos.md`](docs/modelo-datos.md) | Entidades, ER (borrador), notas 3FN |
+| [`docs/esquema-er.md`](docs/esquema-er.md) | Diagrama ER completo del esquema implementado |
 | [`docs/multi-tenancy.md`](docs/multi-tenancy.md) | Comparación de estrategias y decisión propuesta |
 | [`docs/division-trabajo.md`](docs/division-trabajo.md) | Reparto A/B/C propuesto |
 
