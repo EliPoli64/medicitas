@@ -172,6 +172,23 @@ CREATE TABLE "HorarioAtencion" (
         REFERENCES "Profesional" ("clinicaId", "id")
 );
 
+-- RF5: varios bloques por día son válidos, pero no pueden solaparse para el
+-- mismo profesional en el mismo día y con vigencias que se cruzan.
+ALTER TABLE "HorarioAtencion"
+    ADD CONSTRAINT "HorarioAtencionSinSolape"
+    EXCLUDE USING gist (
+        "clinicaId" WITH =,
+        "profesionalId" WITH =,
+        "diaSemana" WITH =,
+        tsrange(
+            date '2000-01-01' + "horaInicio",
+            date '2000-01-01' + "horaFin",
+            '[)'
+        ) WITH &&,
+        daterange("vigenteDesde", "vigenteHasta", '[]') WITH &&
+    )
+    WHERE ("activo" = true);
+
 CREATE TABLE "Bloqueo" (
     "id"                  uuid        NOT NULL DEFAULT gen_random_uuid(),
     "clinicaId"           uuid        NOT NULL,
@@ -399,6 +416,67 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION app."validarRolProfesional"()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    vRol text;
+BEGIN
+    SELECT r."codigo" INTO vRol
+    FROM public."Usuario" u
+    JOIN public."Rol" r ON r."id" = u."rolId"
+    WHERE u."id" = NEW."usuarioId"
+      AND u."clinicaId" = NEW."clinicaId"
+      AND u."activo" = true;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El usuario % no existe, no está activo o no pertenece a la clínica %',
+            NEW."usuarioId", NEW."clinicaId";
+    END IF;
+
+    IF vRol <> 'profesional' THEN
+        RAISE EXCEPTION 'El usuario % tiene rol % y no puede asociarse como profesional',
+            NEW."usuarioId", vRol;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION app."validarEspecialidadProfesionalServicio"()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    vEspecialidadProfesional uuid;
+    vEspecialidadServicio    uuid;
+BEGIN
+    SELECT p."especialidadId", s."especialidadId"
+    INTO vEspecialidadProfesional, vEspecialidadServicio
+    FROM public."Profesional" p
+    JOIN public."Servicio" s
+      ON s."id" = NEW."servicioId"
+     AND s."clinicaId" = NEW."clinicaId"
+    WHERE p."id" = NEW."profesionalId"
+      AND p."clinicaId" = NEW."clinicaId";
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El profesional % o el servicio % no existen en la clínica %',
+            NEW."profesionalId", NEW."servicioId", NEW."clinicaId";
+    END IF;
+
+    IF vEspecialidadProfesional <> vEspecialidadServicio THEN
+        RAISE EXCEPTION 'El servicio % no corresponde a la especialidad del profesional %',
+            NEW."servicioId", NEW."profesionalId";
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION app."prepararCita"()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -408,6 +486,14 @@ DECLARE
     vDuracion integer;
 BEGIN
     IF TG_OP = 'INSERT' THEN
+        -- Una cita nueva siempre nace reservada (RF13). No se permite
+        -- insertar directamente una cita atendida, ausente, cancelada o
+        -- reprogramada.
+        IF NEW."estado" IS DISTINCT FROM 'reservada' THEN
+            RAISE EXCEPTION 'Una cita nueva debe crearse en estado reservada; se recibió %',
+                NEW."estado";
+        END IF;
+
         SELECT s."duracionMinutos" INTO vDuracion
         FROM public."Servicio" s
         WHERE s."id" = NEW."servicioId"
@@ -452,6 +538,22 @@ BEGIN
                 NEW."profesionalId", NEW."servicioId";
         END IF;
 
+        -- Refuerzo RF3/RF4: la asociación pudo quedar obsoleta si cambió la
+        -- especialidad del profesional; la cita exige que sigan alineadas.
+        IF NOT EXISTS (
+            SELECT 1
+            FROM public."Profesional" p
+            JOIN public."Servicio" s
+              ON s."id" = NEW."servicioId"
+             AND s."clinicaId" = NEW."clinicaId"
+            WHERE p."id" = NEW."profesionalId"
+              AND p."clinicaId" = NEW."clinicaId"
+              AND p."especialidadId" = s."especialidadId"
+        ) THEN
+            RAISE EXCEPTION 'El servicio % no corresponde a la especialidad del profesional %',
+                NEW."servicioId", NEW."profesionalId";
+        END IF;
+
         NEW."duracionMinutos" := vDuracion;
         NEW."fin" := NEW."inicio" + make_interval(mins => vDuracion);
         RETURN NEW;
@@ -465,6 +567,7 @@ BEGIN
        OR NEW."servicioId" IS DISTINCT FROM OLD."servicioId"
        OR NEW."inicio" IS DISTINCT FROM OLD."inicio"
        OR NEW."duracionMinutos" IS DISTINCT FROM OLD."duracionMinutos"
+       OR NEW."citaOrigenId" IS DISTINCT FROM OLD."citaOrigenId"
     THEN
         RAISE EXCEPTION 'Los datos de la cita no se pueden modificar; use una reprogramación';
     END IF;
@@ -552,6 +655,109 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION app."validarCitaOrigen"()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    vEstado "EstadoCita";
+BEGIN
+    IF NEW."citaOrigenId" IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT c."estado" INTO vEstado
+    FROM public."Cita" c
+    WHERE c."id" = NEW."citaOrigenId"
+      AND c."clinicaId" = NEW."clinicaId";
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cita origen % no existe en la clínica %',
+            NEW."citaOrigenId", NEW."clinicaId";
+    END IF;
+
+    IF vEstado <> 'reprogramada' THEN
+        RAISE EXCEPTION 'La cita origen % debe estar reprogramada antes de crear la cita nueva',
+            NEW."citaOrigenId";
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- RF10: la reprogramación es atómica. Marca la cita original como
+-- reprogramada y crea la nueva cita en la misma transacción. Si la nueva cita
+-- viola una restricción, PostgreSQL revierte también el cambio de la original.
+CREATE OR REPLACE FUNCTION app."reprogramarCita"(
+    pCitaOrigenId uuid,
+    pClinicaId uuid,
+    pNuevoInicio timestamptz,
+    pNuevoProfesionalId uuid DEFAULT NULL,
+    pNuevoServicioId uuid DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    vPacienteId    uuid;
+    vProfesionalId uuid;
+    vServicioId    uuid;
+    vEstado        "EstadoCita";
+    vNuevaCitaId   uuid;
+BEGIN
+    SELECT c."pacienteId", c."profesionalId", c."servicioId", c."estado"
+    INTO vPacienteId, vProfesionalId, vServicioId, vEstado
+    FROM public."Cita" c
+    WHERE c."id" = pCitaOrigenId
+      AND c."clinicaId" = pClinicaId
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cita origen % no existe en la clínica %',
+            pCitaOrigenId, pClinicaId;
+    END IF;
+
+    IF vEstado <> 'reservada' THEN
+        RAISE EXCEPTION 'Solo se puede reprogramar una cita reservada; la cita % está en estado %',
+            pCitaOrigenId, vEstado;
+    END IF;
+
+    IF pNuevoProfesionalId IS NOT NULL THEN
+        vProfesionalId := pNuevoProfesionalId;
+    END IF;
+
+    IF pNuevoServicioId IS NOT NULL THEN
+        vServicioId := pNuevoServicioId;
+    END IF;
+
+    UPDATE public."Cita"
+    SET "estado" = 'reprogramada'
+    WHERE "id" = pCitaOrigenId
+      AND "clinicaId" = pClinicaId;
+
+    INSERT INTO public."Cita" (
+        "clinicaId",
+        "pacienteId",
+        "profesionalId",
+        "servicioId",
+        "inicio",
+        "citaOrigenId"
+    ) VALUES (
+        pClinicaId,
+        vPacienteId,
+        vProfesionalId,
+        vServicioId,
+        pNuevoInicio,
+        pCitaOrigenId
+    )
+    RETURNING "id" INTO vNuevaCitaId;
+
+    RETURN vNuevaCitaId;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION app."validarNotaClinica"()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -635,6 +841,14 @@ CREATE TRIGGER "UsuarioValidarClinica"
     BEFORE INSERT OR UPDATE ON "Usuario"
     FOR EACH ROW EXECUTE FUNCTION app."validarUsuarioClinica"();
 
+CREATE TRIGGER "ProfesionalValidarRol"
+    BEFORE INSERT OR UPDATE ON "Profesional"
+    FOR EACH ROW EXECUTE FUNCTION app."validarRolProfesional"();
+
+CREATE TRIGGER "ProfesionalServicioValidarEspecialidad"
+    BEFORE INSERT OR UPDATE ON "ProfesionalServicio"
+    FOR EACH ROW EXECUTE FUNCTION app."validarEspecialidadProfesionalServicio"();
+
 CREATE TRIGGER "CitaPreparar"
     BEFORE INSERT OR UPDATE ON "Cita"
     FOR EACH ROW EXECUTE FUNCTION app."prepararCita"();
@@ -642,6 +856,10 @@ CREATE TRIGGER "CitaPreparar"
 CREATE TRIGGER "CitaValidarHorario"
     BEFORE INSERT ON "Cita"
     FOR EACH ROW EXECUTE FUNCTION app."validarCitaEnHorario"();
+
+CREATE TRIGGER "CitaValidarOrigen"
+    BEFORE INSERT ON "Cita"
+    FOR EACH ROW EXECUTE FUNCTION app."validarCitaOrigen"();
 
 CREATE TRIGGER "CitaValidarTransicion"
     BEFORE UPDATE ON "Cita"

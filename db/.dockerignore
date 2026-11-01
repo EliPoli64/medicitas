@@ -1,0 +1,10 @@
+# Archivos que no deben entrar al contexto de build de PostgreSQL.
+
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+*.md
+.env
+.env.*
