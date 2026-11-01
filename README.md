@@ -9,23 +9,31 @@ Enunciado del curso: [`spec.md`](spec.md).
 ## Estado actual
 
 - Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
-- **Sin implementación todavía:** los archivos de `api/`, `db/` e `id-provider/` son puntos de partida limpios; no contienen el dominio de la Tarea Corta 1 (`reservas`) ni configuración de ese proyecto.
+- **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`.
+- **Pendiente de base de datos:** políticas RLS, roles de base de datos, `GRANT`s y datos semilla.
+- **API sin implementar:** el esqueleto de `api/` está en **Go** como punto de partida, siguiendo la recomendación inicial. Si el grupo elige otro lenguaje, se reemplaza esa carpeta.
 - **Pendiente de acordar en el grupo:** lenguaje definitivo de la API y qué traemos de la Tarea Corta 1.
-- El esqueleto actual de `api/` está en **Go** como punto de partida, siguiendo la recomendación inicial. Si el grupo elige otro lenguaje, se reemplaza esa carpeta.
 
 ## Estructura del repositorio
 
 ```text
 .
 ├── api/                  # Esqueleto de la API (main, auth, Dockerfile, go.mod)
-├── db/                   # Imagen de PostgreSQL y carpeta de migraciones vacía
+├── db/                   # Imagen de PostgreSQL y migraciones del esquema
 ├── id-provider/          # Imagen de Keycloak y carpeta de import del realm
-├── docs/                 # Modelo de datos, multi-tenancy y división del trabajo
+├── docs/                 # Modelo de datos, diagrama ER, multi-tenancy y división del trabajo
 ├── docker-compose.yml    # Esqueleto con api + db + keycloak + redis
 ├── .env.example          # Variables de entorno de ejemplo
 ├── .gitignore
 └── spec.md               # Enunciado del curso
 ```
+
+## Base de datos
+
+- Esquema: [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql).
+- Diagrama ER: [`docs/esquema-er.md`](docs/esquema-er.md).
+- La imagen `db` ejecuta los archivos de `db/migrations/` al inicializar el volumen de PostgreSQL.
+- RLS, roles de base de datos y `GRANT`s quedan para una migración posterior.
 
 ## Propuesta de división (a confirmar)
 

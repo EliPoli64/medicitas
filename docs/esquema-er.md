@@ -255,10 +255,11 @@ erDiagram
 
 - **Estados de la cita:** `reservada`, `atendida`, `ausente`, `cancelada` y `reprogramada`. Los cuatro últimos son finales.
 - **Cancelación:** vive en `Cita` mediante `canceladaEn`, `canceladaPorUsuarioId` y `motivoCancelacion`.
-- **Reprogramación:** la cita original pasa a `reprogramada` y se crea otra cita con `citaOrigenId` apuntando a la anterior.
+- **Reprogramación:** la cita original pasa a `reprogramada` y se crea otra cita con `citaOrigenId` apuntando a la anterior. La función `app."reprogramarCita"` hace ambos pasos en una sola transacción.
 - **Duración:** `Cita.duracionMinutos` es una instantánea de `Servicio.duracionMinutos`; `fin` se calcula al insertar.
 - **Solapamientos:** `Cita` tiene restricciones de exclusión por profesional y por paciente para citas `reservada`.
-- **Horario y bloqueos:** se validan al insertar una cita, usando la zona horaria de `Clinica`.
+- **Horario y bloqueos:** se validan al insertar una cita, usando la zona horaria de `Clinica`; los horarios activos del mismo profesional no pueden solaparse.
+- **Profesional:** debe estar enlazado a un usuario con rol `profesional`; sus servicios deben ser de su misma especialidad.
 - **Nota clínica:** solo se permite en citas `atendida` y la FK compuesta obliga a que la escriba el profesional de la cita.
 - **Auditoría:** `Auditoria` es append-only; los triggers bloquean `UPDATE`, `DELETE` y `TRUNCATE`.
 - **RLS:** pendiente en una migración posterior. Las columnas `clinicaId` y las FKs compuestas ya están preparadas.
