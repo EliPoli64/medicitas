@@ -990,6 +990,14 @@ CREATE TABLE ops."Migracion" (
     CONSTRAINT "MigracionPk" PRIMARY KEY ("version")
 );
 
+CREATE TABLE ops."Semilla" (
+    "version"    text        NOT NULL,
+    "aplicadoEn" timestamptz NOT NULL DEFAULT now(),
+    "detalle"    jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT "SemillaPk" PRIMARY KEY ("version"),
+    CONSTRAINT "SemillaDetalleObjeto" CHECK (jsonb_typeof("detalle") = 'object')
+);
+
 -- =============================================================================
 -- Catálogos base
 -- =============================================================================
