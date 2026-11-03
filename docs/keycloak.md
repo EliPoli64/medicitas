@@ -25,10 +25,12 @@ Regla de diseño: la API **no** confía un `clinica_id` del body/query para auto
 
 ## Users temporales (hasta el seeder)
 
-| Usuario | Password | Rol | `clinica_id` |
-|---------|----------|-----|--------------|
-| `plat-admin` | `plat123` | `adm-plataforma` | *(ausente — OK para plataforma)* |
-| `recep-norte` | `recep123` | `recepcion` | `clinica-norte` |
+Documentados también en [`.env.example`](../.env.example) (`SEED_*`). Hoy el realm JSON trae los mismos valores; el seeder debería leer las vars, no duplicar passwords en código.
+
+| Variable user | Variable pass | Rol | `clinica_id` |
+|---------------|---------------|-----|--------------|
+| `SEED_USER_PLAT_ADMIN` (`plat-admin`) | `SEED_PASS_PLAT_ADMIN` | `adm-plataforma` | *(ausente)* |
+| `SEED_USER_RECEP_NORTE` (`recep-norte`) | `SEED_PASS_RECEP_NORTE` | `recepcion` | `SEED_RECEP_NORTE_CLINICA_ID` |
 
 Cuando exista el seeder de Elías, esa lista canónica manda; estos dos sirven para probar tokens ya.
 
@@ -66,8 +68,8 @@ docker compose up --build db keycloak
 ## Contrato con Elías (seeder)
 
 1. **Nosotros (realm JSON):** realm, 4 roles, client `api`, mapper `clinica_id`.
-2. **Seeder:** crea usuarios en Keycloak (Admin API) alineados con filas `usuario` / clínicas en Postgres; passwords de prueba documentadas en el README del seeder.
-3. No mantener dos listas “oficiales” de users sin acuerdo: canónica = seeder.
+2. **Seeder:** crea usuarios en Keycloak (Admin API) alineados con filas `usuario` / clínicas en Postgres; lee `SEED_*` del entorno (local: `.env`; CI: variables de GitLab; prod: secret manager).
+3. Fuente documentada de users/pass demo: `.env.example`. Canónica en runtime = seeder + env.
 4. Roles y `client_id=api` no los reinventar en el seeder: deben coincidir con este realm.
 
 ### Checklist para el seeder (Admin API)
