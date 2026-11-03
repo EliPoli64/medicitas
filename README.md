@@ -11,8 +11,9 @@ Enunciado del curso: [`spec.md`](spec.md).
 - Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
 - **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`.
 - **Pendiente de base de datos:** políticas RLS, roles de base de datos, `GRANT`s y datos semilla.
-- **API sin implementar:** el esqueleto de `api/` está en **Go** como punto de partida, siguiendo la recomendación inicial. Si el grupo elige otro lenguaje, se reemplaza esa carpeta.
-- **Pendiente de acordar en el grupo:** lenguaje definitivo de la API y qué traemos de la Tarea Corta 1.
+- **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
+- **API sin implementar:** el esqueleto de `api/` está en **Go** como punto de partida. Validación JWT (RF17) pendiente en `api/auth.go`.
+- **Redis / seeder:** Cristian y Elías, respectivamente.
 
 ## Estructura del repositorio
 
@@ -20,9 +21,9 @@ Enunciado del curso: [`spec.md`](spec.md).
 .
 ├── api/                  # Esqueleto de la API (main, auth, Dockerfile, go.mod)
 ├── db/                   # Imagen de PostgreSQL y migraciones del esquema
-├── id-provider/          # Imagen de Keycloak y carpeta de import del realm
-├── docs/                 # Modelo de datos, diagrama ER, multi-tenancy y división del trabajo
-├── docker-compose.yml    # Esqueleto con api + db + keycloak + redis
+├── id-provider/          # Keycloak + import/medicitas-realm.json
+├── docs/                 # Modelo, ER, multi-tenancy, Keycloak, división
+├── docker-compose.yml    # api + db + keycloak + redis
 ├── .env.example          # Variables de entorno de ejemplo
 ├── .gitignore
 └── spec.md               # Enunciado del curso
@@ -35,57 +36,47 @@ Enunciado del curso: [`spec.md`](spec.md).
 - La imagen `db` ejecuta los archivos de `db/migrations/` al inicializar el volumen de PostgreSQL.
 - RLS, roles de base de datos y `GRANT`s quedan para una migración posterior.
 
-## Propuesta de división (a confirmar)
+## Identidad (Keycloak)
 
-Somos tres: que **cada uno se quede con un tercio (A, B o C)**, o lo repartimos de otra forma si les late más. No está asignado aún — márcalo en el chat / en [`docs/division-trabajo.md`](docs/division-trabajo.md).
+```bash
+cp .env.example .env
+docker compose up --build db keycloak
+```
 
-| Tercio | Alcance | RF / módulos |
-|--------|---------|--------------|
-| **A — Fundación** | Modelo ER, diccionario, multi-tenancy, semilla, Compose base | Modelo, I5 (diseño), arranque |
-| **B — Identidad y catálogo** | Keycloak/roles, clínicas, usuarios, servicios, profesionales, pacientes | RF1–RF6, RF14, RF17 |
-| **C — Citas y caché** | Disponibilidad, reserva/reprogramación, auditoría, Redis, prueba de carrera | RF7–RF13, RF15–RF16, RF18–RF21, I1–I8 |
+Token de prueba (usuario temporal `recep-norte` / `recep123`):
+
+```bash
+curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-connect/token" \
+  -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password"
+```
+
+Detalle, roles y contrato con el seeder: [`docs/keycloak.md`](docs/keycloak.md).
+
+## División del trabajo
+
+| Quién | Encargo |
+|-------|---------|
+| **Matías** | Keycloak (realm, roles, `clinica_id`) |
+| **Cristian** | Redis / I8 |
+| **Elías** | Schema + seeder Python |
+
+Más detalle: [`docs/division-trabajo.md`](docs/division-trabajo.md).
 
 Módulo extra (grupos de 3): elegir **uno**. Candidato propuesto: **RLS como segunda estrategia**.
 
-## Qué traer de la Tarea Corta 1 (a decidir)
+## Reuso de la Tarea Corta 1
 
-El repo quedó limpio del código de TC1 a propósito. Propongo que el grupo revise y diga qué sí metemos.
-
-### Vale la pena traer (adaptar, no pegar ciego)
-
-| Pieza en TC1 | Por qué |
-|--------------|---------|
-| `docker-compose.yml` | Patrón api + db + keycloak, healthchecks, `depends_on`, volumen |
-| `api/Dockerfile` | Multi-stage, sin secretos en la imagen |
-| `api/auth.go` (+ tests de auth) | Validación JWT/JWKS contra Keycloak (RF17) |
-| `id-provider/Dockerfile` + estructura del realm | Import de realm al arrancar (habría que renombrar roles a MediCitas) |
-| `db/Dockerfile` + idea de `migrator` | Schema al levantar sin pasos manuales |
-| `.env.example` + `.gitignore` / `.dockerignore` | Config sin secretos en el repo |
-| `api/go.mod` / `go.sum` | Solo si cerramos **Go** |
-| Rutas `/health` y `/ready` (patrón en `api/main.go`) | Contrato de liveness/readiness |
-
-### Traer solo la idea, no el dominio
-
-| Pieza | Nota |
-|-------|------|
-| Tabla/SPs de `Reserva` y CRUD `/reservas` | Dominio distinto; no sirve pegarlo como MediCitas |
-| Realm `tareauno` / rol `reserva-writer` | Hay que rehacer roles de la matriz |
-| `k8s/` (kind/Kustomize) | **No** lo pide Etapa 1; dejar fuera salvo que queramos demo extra |
-| `data/` local de Postgres | Nunca al repo |
-| Scripts `run-k8s` / cleanup de TC1 | Opcional; no son el núcleo de MediCitas |
-
-### Si el lenguaje no es Go
-
-Igual conviene traer Compose, Keycloak/realm (adaptado), migraciones SQL nuevas y la idea de health/ready. Lo que no se reutiliza: binario Go, `auth.go`, Dockerfiles de la API.
+Compose, imagen Keycloak e idea de JWT ya están adaptados. Pendiente útil de TC1: rellenar `api/auth.go` (validación JWKS) cuando la API implemente RF17. No traer dominio `Reserva` ni `k8s/`.
 
 ## Documentación de trabajo
 
 | Documento | Contenido |
 |-----------|-----------|
-| [`docs/modelo-datos.md`](docs/modelo-datos.md) | Entidades, ER (borrador), notas 3FN |
-| [`docs/esquema-er.md`](docs/esquema-er.md) | Diagrama ER completo del esquema implementado |
-| [`docs/multi-tenancy.md`](docs/multi-tenancy.md) | Comparación de estrategias y decisión propuesta |
-| [`docs/division-trabajo.md`](docs/division-trabajo.md) | Reparto A/B/C propuesto |
+| [`docs/modelo-datos.md`](docs/modelo-datos.md) | Entidades, notas 3FN |
+| [`docs/esquema-er.md`](docs/esquema-er.md) | Diagrama ER del esquema SQL |
+| [`docs/multi-tenancy.md`](docs/multi-tenancy.md) | Estrategia `clinica_id` |
+| [`docs/keycloak.md`](docs/keycloak.md) | Realm, roles, tokens, contrato seeder |
+| [`docs/division-trabajo.md`](docs/division-trabajo.md) | Matías / Cristian / Elías |
 
 ## Pregunta rectora (defensa)
 

@@ -1,13 +1,11 @@
-# Esqueleto de Docker Compose para MediCitas (spec.md, sección 6).
+# Docker Compose para MediCitas (spec.md, sección 6).
 #
-# Servicios previstos: aplicación, PostgreSQL, Keycloak y Redis.
-# Todavía no hay esquema, realm, caché ni API implementados: este archivo
-# solo deja la estructura y las dependencias listas para completar.
+# Servicios: aplicación, PostgreSQL, Keycloak y Redis.
+# Realm Keycloak versionado en id-provider/import/medicitas-realm.json.
 #
 # TODO al cerrar el diseño:
-#   - agregar el servicio de migraciones/semilla;
-#   - versionar el realm de Keycloak en id-provider/import/;
-#   - definir variables y políticas de Redis;
+#   - agregar el servicio de migraciones/semilla (Elías);
+#   - políticas de Redis / I8 (Cristian);
 #   - verificar que `docker compose up` deje el sistema operativo y poblado.
 
 services:
@@ -32,7 +30,8 @@ services:
   keycloak:
     build: ./id-provider
     command: start-dev --import-realm
-    env_file: [.env]
+    # No usar env_file completo: KC_ISSUER_URL / KC_JWKS_URL / KC_REALM son de la API,
+    # no del servidor Keycloak (KC_* reservado por Quarkus).
     environment:
       KC_DB: postgres
       KC_DB_URL_HOST: db

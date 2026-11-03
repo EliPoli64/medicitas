@@ -1,49 +1,35 @@
-# División del trabajo — propuesta para el grupo
+# División del trabajo — grupo de 3
 
-> Propuesta de Matías. **No está asignada:** cada uno puede quedarse con un tercio (A, B o C), o lo partimos de otra forma si les parece mejor. Comenten y cierren el reparto.
+Reparto acordado en la práctica (Keycloak / Redis / semilla).
 
-Somos tres. La idea es que cada persona tenga un bloque claro (y commits propios), para el avance y para la defensa.
+| Quién | Encargo |
+|-------|---------|
+| **Matías** | Keycloak: realm, roles, client, claim `clinica_id`, docs de identidad ([`docs/keycloak.md`](keycloak.md)) |
+| **Cristian** | Redis: caché de disponibilidad, invalidación, I8 |
+| **Elías** | Schema SQL + seeder Python (BD + users canónicos en Keycloak) |
 
-## Tercios propuestos
+## Tercios funcionales (referencia de la spec)
 
-### A — Fundación (arranque / avance)
+### A — Fundación
 
-- Modelo relacional, ER, borrador 3FN, diccionario.
-- Comparación escrita de multi-tenancy y decisión (`clinica_id`).
-- Semilla: ≥ 3 clínicas.
-- Compose base (api + db + keycloak + redis) cuando el grupo decida stack.
-- Docs en `docs/` y commits tempranos en este repositorio.
-
-**Quién:** _por asignar_
+- Modelo relacional, ER, multi-tenancy (`clinica_id`), Compose base.
+- Semilla de negocio: Elías (script).
+- IdP listo al arrancar: Matías.
 
 ### B — Identidad y catálogo
 
-- Realm Keycloak con roles de la matriz.
-- RF1–RF4 (clínicas, usuarios, servicios, profesionales).
-- RF5–RF6 (horarios y bloqueos).
-- RF14 (pacientes).
-- RF17 (authn/authz; clínica derivada de la identidad).
-
-**Quién:** _por asignar_ (Elías u otro)
+- Realm/roles (Matías) + RF17 en API (validar JWT) cuando se implemente.
+- RF1–RF6, RF14: catálogo/pacientes (por asignar en código de API).
 
 ### C — Citas, concurrencia y caché
 
-- RF7–RF8 (disponibilidad; índices).
-- RF9–RF13 (ciclo de vida; pregunta rectora).
-- RF15–RF16, RF18–RF21 (notas, historial, auditoría, agenda del día, conteos).
-- Redis + invalidación (I8).
-- Prueba de carrera reproducible (una sola ganadora; I1).
-
-**Quién:** _por asignar_ (el otro compañero u otro)
-
-## Si prefieren otro corte
-
-Ejemplos válidos: uno toma solo modelo+docs, otro solo infra/Compose, otro API; o A+parte de B vs C más grande. Lo importante es que los tres tengan commits y que nadie quede sin pieza defendible.
+- RF7–RF13, RF15–RF21, prueba de carrera.
+- Redis / I8: **Cristian**.
 
 ## Módulo extra (obligatorio para 3)
 
-Elegir exactamente uno. Propuesta: **RLS como segunda estrategia** (encaja con el multi-tenancy de A).
+Elegir exactamente uno. Propuesta: **RLS como segunda estrategia**.
 
 ## Convención de commits
 
-Cada integrante debe tener commits propios. En archivos compartidos la autoría se considera conjunta; un integrante sin commits se evalúa solo por lo demostrable.
+Cada integrante debe tener commits propios. En archivos compartidos la autoría se considera conjunta.

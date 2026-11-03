@@ -1,0 +1,92 @@
+{
+  "realm": "medicitas",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "adm-plataforma",
+        "description": "Administrador de plataforma: alta de clínicas; sin acceso a datos clínicos"
+      },
+      {
+        "name": "adm-clinica",
+        "description": "Administrador de clínica: usuarios, catálogo, bitácora"
+      },
+      {
+        "name": "recepcion",
+        "description": "Recepción: pacientes y ciclo de vida de citas"
+      },
+      {
+        "name": "profesional",
+        "description": "Profesional de salud: agenda propia y notas clínicas"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "api",
+      "name": "MediCitas API",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "clinica_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "clinica_id",
+            "claim.name": "clinica_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "plat-admin",
+      "enabled": true,
+      "email": "plat-admin@medicitas.local",
+      "emailVerified": true,
+      "firstName": "Plataforma",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "plat123", "temporary": false }
+      ],
+      "realmRoles": ["adm-plataforma"]
+    },
+    {
+      "username": "recep-norte",
+      "enabled": true,
+      "email": "recep-norte@medicitas.local",
+      "emailVerified": true,
+      "firstName": "Recep",
+      "lastName": "Norte",
+      "attributes": {
+        "clinica_id": ["clinica-norte"]
+      },
+      "credentials": [
+        { "type": "password", "value": "recep123", "temporary": false }
+      ],
+      "realmRoles": ["recepcion"]
+    }
+  ]
+}

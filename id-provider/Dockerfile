@@ -1,6 +1,6 @@
-# Esqueleto de la imagen de Keycloak.
-# El realm de MediCitas (roles, clientes y usuarios de prueba) se versionará
-# en id-provider/import/ y se importará al arrancar el contenedor.
+# Imagen de Keycloak para MediCitas.
+# Al arrancar con `start-dev --import-realm`, importa los JSON de import/
+# (medicitas-realm.json: roles, client api, mapper clinica_id, users temporales).
 
 FROM quay.io/keycloak/keycloak:26.0.6
 
