@@ -1,10 +1,9 @@
 # Docker Compose para MediCitas (spec.md, sección 6).
 #
-# Servicios: aplicación, PostgreSQL, Keycloak y Redis.
+# Servicios: aplicación, PostgreSQL, Keycloak, Redis y job de semilla.
 # Realm Keycloak versionado en id-provider/import/medicitas-realm.json.
 #
 # TODO al cerrar el diseño:
-#   - agregar el servicio de migraciones/semilla (Elías);
 #   - políticas de Redis / I8 (Cristian);
 #   - verificar que `docker compose up` deje el sistema operativo y poblado.
 
@@ -69,6 +68,31 @@ services:
       timeout: 3s
       retries: 5
 
+  # Job one-shot: carga la semilla y termina. No es un servicio permanente.
+  # En cada `docker compose up` comprueba ops."Semilla"; si ya se aplicó, sale
+  # con 0 sin duplicar datos.
+  seed:
+    build: ./seed
+    env_file: [.env]
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      KC_URL: http://keycloak:6767
+      KC_REALM: ${KC_REALM}
+      KC_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
+      SEED_VERSION: ${SEED_VERSION:-demo-v1}
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: ./api
     env_file: [.env]
@@ -90,6 +114,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      seed:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
