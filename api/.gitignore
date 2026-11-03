@@ -1,0 +1,18 @@
+# Artefactos locales de la API Go.
+
+# Binarios de `go build` (el módulo se llama medicitas/api)
+/api
+/medicitas-api
+/dist/
+/bin/
+
+# Pruebas y cobertura
+*.test
+*.out
+*.prof
+coverage.out
+coverage.html
+
+# Entorno local
+.env
+.env.*

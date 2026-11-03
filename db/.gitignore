@@ -1,0 +1,16 @@
+# Datos y respaldos locales de PostgreSQL.
+
+/data/
+/backups/
+
+# Volcados y logs locales
+*.dump
+*.backup
+*.sql.gz
+*.sql.bz2
+*.sql.zst
+*.log
+
+# Entorno local
+.env
+.env.*

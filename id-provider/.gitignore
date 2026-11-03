@@ -1,0 +1,15 @@
+# Datos locales de Keycloak. El realm versionado vive en import/.
+
+/data/
+/exports/
+/providers/*.jar
+
+# Logs y secretos locales
+*.log
+.env
+.env.*
+*.jks
+*.p12
+*.pfx
+*.key
+*.pem

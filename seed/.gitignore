@@ -1,0 +1,26 @@
+# Artefactos locales del job Python.
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Herramientas de prueba y análisis
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Empaquetado
+build/
+dist/
+*.egg-info/
+
+# Entorno local
+.env
+.env.*
