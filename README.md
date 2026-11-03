@@ -10,10 +10,11 @@ Enunciado del curso: [`spec.md`](spec.md).
 
 - Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
 - **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`.
-- **Pendiente de base de datos:** políticas RLS, roles de base de datos, `GRANT`s y datos semilla.
+- **Pendiente de base de datos:** políticas RLS, roles de base de datos y `GRANT`s.
+- **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
 - **API sin implementar:** el esqueleto de `api/` está en **Go** como punto de partida. Validación JWT (RF17) pendiente en `api/auth.go`.
-- **Redis / seeder:** Cristian y Elías, respectivamente.
+- **Redis:** Cristian.
 
 ## Estructura del repositorio
 
@@ -21,9 +22,10 @@ Enunciado del curso: [`spec.md`](spec.md).
 .
 ├── api/                  # Esqueleto de la API (main, auth, Dockerfile, go.mod)
 ├── db/                   # Imagen de PostgreSQL y migraciones del esquema
+├── seed/                 # Job one-shot de datos demo y users de Keycloak
 ├── id-provider/          # Keycloak + import/medicitas-realm.json
 ├── docs/                 # Modelo, ER, multi-tenancy, Keycloak, división
-├── docker-compose.yml    # api + db + keycloak + redis
+├── docker-compose.yml    # api + db + keycloak + redis + seed
 ├── .env.example          # Variables de entorno de ejemplo
 ├── .gitignore
 └── spec.md               # Enunciado del curso
@@ -35,6 +37,21 @@ Enunciado del curso: [`spec.md`](spec.md).
 - Diagrama ER: [`docs/esquema-er.md`](docs/esquema-er.md).
 - La imagen `db` ejecuta los archivos de `db/migrations/` al inicializar el volumen de PostgreSQL.
 - RLS, roles de base de datos y `GRANT`s quedan para una migración posterior.
+
+### Semilla
+
+El servicio `seed` corre una sola vez después de que PostgreSQL y Keycloak estén sanos, y termina. La API espera a que el job finalice correctamente (`service_completed_successfully`).
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+- Crea/verifica 13 usuarios en Keycloak. Los nuevos usan `SEED_USER_PASSWORD`; los existentes (`plat-admin`, `recep-norte`) conservan su password del realm.
+- Carga 3 clínicas, 6 profesionales, 12 pacientes y 30 citas con fechas relativas al día de ejecución (pasadas, futuras, canceladas, ausentes y una reprogramación por clínica).
+- Es idempotente: si `ops."Semilla"` ya tiene la versión `SEED_VERSION`, sale con 0 sin duplicar datos.
+- Para volver a sembrar desde cero: `docker compose down -v` y luego `docker compose up --build`.
+- Detalle de users, datos y verificación: [`seed/README.md`](seed/README.md).
 
 ## Identidad (Keycloak)
 
