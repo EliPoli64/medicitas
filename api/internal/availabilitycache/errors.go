@@ -17,4 +17,17 @@ var (
 	// ErrInvalidPayload indica que el valor leído no corresponde al formato
 	// esperado o a la clave consultada.
 	ErrInvalidPayload = errors.New("invalid availability cache payload")
+
+	// ErrCacheRead indica un fallo al leer de Redis. La consulta puede
+	// continuar con el Loader.
+	ErrCacheRead = errors.New("availability cache read failed")
+
+	// ErrCacheWrite indica un fallo al escribir en Redis. La consulta puede
+	// continuar con el resultado del Loader, pero no queda cacheada.
+	ErrCacheWrite = errors.New("availability cache write failed")
+
+	// ErrCacheInvalidation indica que no se pudo publicar un epoch nuevo.
+	// Es un fallo que el llamador debe tratar explícitamente: la reserva
+	// puede estar confirmada en PostgreSQL aunque la caché siga vieja.
+	ErrCacheInvalidation = errors.New("availability cache invalidation failed")
 )
