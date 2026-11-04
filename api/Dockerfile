@@ -3,8 +3,7 @@ FROM golang:1.25-alpine AS builder
 WORKDIR /src
 
 COPY go.mod ./
-# TODO: restaurar esta línea cuando exista go.sum.
-# COPY go.sum ./
+COPY go.sum ./
 RUN go mod download
 
 COPY . .

@@ -10,6 +10,10 @@ var (
 	// para construir una clave válida.
 	ErrInvalidRequest = errors.New("invalid availability request")
 
+	// ErrInvalidConfig indica que la configuración del paquete o del cliente
+	// Redis no es válida.
+	ErrInvalidConfig = errors.New("invalid availability cache configuration")
+
 	// ErrInvalidPayload indica que el valor leído no corresponde al formato
 	// esperado o a la clave consultada.
 	ErrInvalidPayload = errors.New("invalid availability cache payload")
