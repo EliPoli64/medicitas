@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,9 +20,10 @@ type fakeStore struct {
 
 	values map[string]string
 
-	getErr   error
-	setErr   error
-	setNXErr error
+	getErr    error
+	getErrFor func(key string) error
+	setErr    error
+	setNXErr  error
 
 	getCalls  int
 	setCalls  int
@@ -39,6 +41,11 @@ func (f *fakeStore) Get(_ context.Context, key string) (string, error) {
 	f.getCalls++
 	if f.getErr != nil {
 		return "", f.getErr
+	}
+	if f.getErrFor != nil {
+		if err := f.getErrFor(key); err != nil {
+			return "", err
+		}
 	}
 	value, ok := f.values[key]
 	if !ok {
@@ -78,6 +85,12 @@ func (f *fakeStore) failGets(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.getErr = err
+}
+
+func (f *fakeStore) failGetsMatching(fn func(key string) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.getErrFor = fn
 }
 
 func (f *fakeStore) failSets(err error) {
@@ -150,7 +163,11 @@ func testRequest() Request {
 }
 
 func testSnapshot(req Request, hour int) Snapshot {
-	start := time.Date(2026, 11, 10, hour, 0, 0, 0, time.UTC)
+	date, err := time.Parse("2006-01-02", req.Fecha)
+	if err != nil {
+		panic("testSnapshot: invalid request date " + req.Fecha)
+	}
+	start := time.Date(date.Year(), date.Month(), date.Day(), hour, 0, 0, 0, time.UTC)
 	return Snapshot{
 		SchemaVersion:   SnapshotSchemaVersion,
 		ClinicaID:       req.ClinicaID,
@@ -182,7 +199,11 @@ func assertSlotHour(t *testing.T, snapshot Snapshot, hour int) {
 	if len(snapshot.Espacios) != 1 {
 		t.Fatalf("got %d slots, want 1", len(snapshot.Espacios))
 	}
-	want := time.Date(2026, 11, 10, hour, 0, 0, 0, time.UTC)
+	date, err := time.Parse("2006-01-02", snapshot.Fecha)
+	if err != nil {
+		t.Fatalf("snapshot has invalid date %q: %v", snapshot.Fecha, err)
+	}
+	want := time.Date(date.Year(), date.Month(), date.Day(), hour, 0, 0, 0, time.UTC)
 	if !snapshot.Espacios[0].Inicio.Equal(want) {
 		t.Fatalf("slot starts at %v, want %v", snapshot.Espacios[0].Inicio, want)
 	}
@@ -220,8 +241,9 @@ func TestCache_RejectsInvalidRequest(t *testing.T) {
 	cache, store := newTestCache(t)
 
 	req := testRequest()
+	snapshot := testSnapshot(req, 9)
 	req.Fecha = "10/11/2026"
-	load, calls := countingLoader(testSnapshot(req, 9))
+	load, calls := countingLoader(snapshot)
 
 	if _, err := cache.GetOrLoad(context.Background(), req, load); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("GetOrLoad() error = %v, want ErrInvalidRequest", err)
@@ -395,6 +417,54 @@ func TestCache_InvalidationIsScopedToAgenda(t *testing.T) {
 	}
 }
 
+// TestCache_InvalidationCoversAllDatesAndServices verifica el alcance de la
+// invalidación: una reserva publica un epoch nuevo por (clínica, profesional),
+// por lo que todas las fechas y servicios de esa agenda quedan inalcanzables.
+func TestCache_InvalidationCoversAllDatesAndServices(t *testing.T) {
+	cache, _ := newTestCache(t)
+
+	base := testRequest()
+	requests := []Request{
+		base,
+		base,
+		base,
+	}
+	requests[1].Fecha = "2026-11-11"
+	requests[2].ServicioID = "serv-2"
+
+	loads := make([]LoaderFunc, len(requests))
+	calls := make([]*atomic.Int32, len(requests))
+	for i, req := range requests {
+		loads[i], calls[i] = countingLoader(testSnapshot(req, 9))
+		if _, err := cache.GetOrLoad(context.Background(), req, loads[i]); err != nil {
+			t.Fatalf("GetOrLoad() error = %v", err)
+		}
+		if _, err := cache.GetOrLoad(context.Background(), req, loads[i]); err != nil {
+			t.Fatalf("GetOrLoad() error = %v", err)
+		}
+		if calls[i].Load() != 1 {
+			t.Fatalf("loader calls for request %d = %d, want 1", i, calls[i].Load())
+		}
+	}
+
+	if err := cache.InvalidateAgenda(context.Background(), base.ClinicaID, base.ProfesionalID); err != nil {
+		t.Fatalf("InvalidateAgenda() error = %v", err)
+	}
+
+	for i, req := range requests {
+		result, err := cache.GetOrLoad(context.Background(), req, loads[i])
+		if err != nil {
+			t.Fatalf("GetOrLoad() error = %v", err)
+		}
+		if result.Hit {
+			t.Fatalf("request %d hit an entry from the old epoch", i)
+		}
+		if calls[i].Load() != 2 {
+			t.Fatalf("loader calls for request %d = %d, want 2", i, calls[i].Load())
+		}
+	}
+}
+
 // TestCache_ReadStartedBeforeInvalidation verifica dos cosas:
 //
 //   - una lectura en curso puede devolver datos previos a la invalidación,
@@ -530,6 +600,90 @@ func TestCache_ConcurrentEpochInitialization(t *testing.T) {
 	}
 }
 
+// TestCache_ConcurrentWritersUnderSameEpochLastWriteWins documenta el
+// comportamiento cuando dos lecturas calculan resultados distintos bajo el
+// mismo epoch: la última escritura gana. No hay ordenamiento por frescura
+// dentro de un epoch; la barrera de consistencia es el cambio de epoch.
+func TestCache_ConcurrentWritersUnderSameEpochLastWriteWins(t *testing.T) {
+	cache, store := newTestCache(t)
+	req := testRequest()
+
+	oldSnapshot := testSnapshot(req, 9)
+	freshSnapshot := testSnapshot(req, 10)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	load := func(context.Context, Request) (Snapshot, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			return oldSnapshot, nil
+		}
+		return freshSnapshot, nil
+	}
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	slow := make(chan outcome, 1)
+	go func() {
+		result, err := cache.GetOrLoad(context.Background(), req, load)
+		slow <- outcome{result: result, err: err}
+	}()
+
+	// El primer lector ya inicializó el epoch y está dentro del Loader.
+	<-entered
+
+	// El segundo lector usa el mismo epoch, calcula un resultado distinto y
+	// escribe primero.
+	fast, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(fast) error = %v", err)
+	}
+	if fast.Hit {
+		t.Fatal("GetOrLoad(fast) reported a hit, want a miss")
+	}
+	assertSlotHour(t, fast.Snapshot, 10)
+
+	// El primer lector termina después y sobrescribe la misma clave.
+	close(release)
+	first := <-slow
+	if first.err != nil {
+		t.Fatalf("GetOrLoad(slow) error = %v", first.err)
+	}
+	if first.result.Hit {
+		t.Fatal("GetOrLoad(slow) reported a hit, want a miss")
+	}
+	assertSlotHour(t, first.result.Snapshot, 9)
+
+	epochKey, err := cache.keys.epochKey(req.ClinicaID, req.ProfesionalID)
+	if err != nil {
+		t.Fatalf("epochKey() error = %v", err)
+	}
+	epoch := store.mustValue(t, epochKey)
+	if !epochPattern.MatchString(epoch) {
+		t.Fatalf("epoch %q does not match the expected format", epoch)
+	}
+	if got := store.size(); got != 2 {
+		t.Fatalf("store has %d keys, want 2 (epoch plus one data key)", got)
+	}
+
+	after, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(after writers) error = %v", err)
+	}
+	if !after.Hit {
+		t.Fatal("GetOrLoad() missed after both writers finished")
+	}
+	// La escritura más lenta fue la última y es la que queda cacheada.
+	assertSlotHour(t, after.Snapshot, 9)
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls.Load())
+	}
+}
+
 func TestCache_EpochLossReinitializes(t *testing.T) {
 	cache, store := newTestCache(t)
 	req := testRequest()
@@ -589,6 +743,104 @@ func TestCache_CorruptEpochIsReplaced(t *testing.T) {
 	}
 	if !epochPattern.MatchString(store.mustValue(t, epochKey)) {
 		t.Fatal("corrupt epoch was not replaced")
+	}
+}
+
+func TestCache_DataReadFailureDoesNotOverwriteEntry(t *testing.T) {
+	cache, store := newTestCache(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+	key := dataKeyFor(t, cache, store, req)
+	before := store.mustValue(t, key)
+
+	store.failGetsMatching(func(key string) error {
+		if strings.Contains(key, ":data:") {
+			return errors.New("data read failed")
+		}
+		return nil
+	})
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v, want a fallback result", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() reported a hit while the data key was failing")
+	}
+	if !errors.Is(result.CacheErr, ErrCacheRead) {
+		t.Fatalf("CacheErr = %v, want ErrCacheRead", result.CacheErr)
+	}
+	assertSlotHour(t, result.Snapshot, 9)
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls.Load())
+	}
+
+	// Un fallo de lectura no autoriza a reemplazar el valor existente.
+	if after := store.mustValue(t, key); after != before {
+		t.Fatal("a failed read overwrote the cached entry")
+	}
+}
+
+func TestCache_EpochInitializationFailureFallsBackToLoader(t *testing.T) {
+	cache, store := newTestCache(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	store.failSetNX(errors.New("setnx unavailable"))
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v, want a fallback result", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() reported a hit without an initialized epoch")
+	}
+	if !errors.Is(result.CacheErr, ErrCacheWrite) {
+		t.Fatalf("CacheErr = %v, want ErrCacheWrite", result.CacheErr)
+	}
+	assertSlotHour(t, result.Snapshot, 9)
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
+	}
+	if got := store.size(); got != 0 {
+		t.Fatalf("store has %d keys, want 0 when SETNX fails", got)
+	}
+}
+
+func TestCache_DecodesNullSlotsAsEmptyList(t *testing.T) {
+	cache, store := newTestCache(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+
+	raw := `{"schemaVersion":1,"clinicaId":"clinica-a","profesionalId":"prof-1",` +
+		`"servicioId":"serv-1","fecha":"2026-11-10",` +
+		`"zonaHoraria":"America/Argentina/Buenos_Aires","duracionMinutos":30,` +
+		`"espacios":null,"generadoEn":"2026-11-04T12:00:00Z"}`
+	store.put(dataKeyFor(t, cache, store, req), raw)
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v", err)
+	}
+	if !result.Hit {
+		t.Fatal("GetOrLoad() missed a readable snapshot")
+	}
+	if result.Snapshot.Espacios == nil {
+		t.Fatal("Espacios is nil, want an empty list")
+	}
+	if len(result.Snapshot.Espacios) != 0 {
+		t.Fatalf("got %d slots, want 0", len(result.Snapshot.Espacios))
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
 	}
 }
 

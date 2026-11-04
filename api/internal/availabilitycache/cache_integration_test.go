@@ -403,6 +403,100 @@ func TestCacheIntegration_ReadStartedBeforeInvalidation(t *testing.T) {
 	}
 }
 
+// TestCacheIntegration_EpochExpiresDuringLoad cubre la carrera entre la
+// pérdida del epoch y una lectura en curso: la escritura de esa lectura queda
+// huérfana bajo el epoch viejo y no se sirve con el epoch nuevo.
+func TestCacheIntegration_EpochExpiresDuringLoad(t *testing.T) {
+	cache, store, _ := newIntegrationCache(t)
+	ctx, cancel := integrationContext(t)
+	defer cancel()
+
+	req := testRequest()
+
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	load := func(context.Context, Request) (Snapshot, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return testSnapshot(req, 9), nil
+	}
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := cache.GetOrLoad(ctx, req, load)
+		done <- outcome{result: result, err: err}
+	}()
+
+	<-entered
+
+	epochKey, err := cache.keys.epochKey(req.ClinicaID, req.ProfesionalID)
+	if err != nil {
+		t.Fatalf("epochKey() error = %v", err)
+	}
+	oldEpoch, err := store.Get(ctx, epochKey)
+	if err != nil {
+		t.Fatalf("Get(old epoch) error = %v", err)
+	}
+	if err := store.client.Del(ctx, epochKey).Err(); err != nil {
+		t.Fatalf("DEL(epoch) error = %v", err)
+	}
+
+	close(release)
+	first := <-done
+	if first.err != nil {
+		t.Fatalf("in-flight GetOrLoad() error = %v", first.err)
+	}
+	if first.result.Hit {
+		t.Fatal("in-flight GetOrLoad() reported a hit, want a miss")
+	}
+
+	oldDataKey, err := cache.keys.dataKey(req, oldEpoch)
+	if err != nil {
+		t.Fatalf("dataKey(old epoch) error = %v", err)
+	}
+	if _, err := store.Get(ctx, oldDataKey); err != nil {
+		t.Fatalf("in-flight read did not write under the old epoch: %v", err)
+	}
+
+	second, err := cache.GetOrLoad(ctx, req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(after epoch loss) error = %v", err)
+	}
+	if second.Hit {
+		t.Fatal("GetOrLoad() served data after the epoch was lost")
+	}
+
+	newEpoch, err := store.Get(ctx, epochKey)
+	if err != nil {
+		t.Fatalf("Get(new epoch) error = %v", err)
+	}
+	if newEpoch == oldEpoch {
+		t.Fatal("epoch was not regenerated")
+	}
+	newDataKey, err := cache.keys.dataKey(req, newEpoch)
+	if err != nil {
+		t.Fatalf("dataKey(new epoch) error = %v", err)
+	}
+	if newDataKey == oldDataKey {
+		t.Fatal("data keys from different epochs must not collide")
+	}
+
+	third, err := cache.GetOrLoad(ctx, req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(after regeneration) error = %v", err)
+	}
+	if !third.Hit {
+		t.Fatal("GetOrLoad() missed after recalculating under the new epoch")
+	}
+}
+
 func TestCacheIntegration_InvalidPayloadFromAnotherClinicIsRejected(t *testing.T) {
 	cache, store, _ := newIntegrationCache(t)
 	ctx, cancel := integrationContext(t)

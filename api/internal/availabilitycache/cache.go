@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 )
 
 // Cache implementa la política de caché de disponibilidad.
@@ -172,7 +171,3 @@ func (c *Cache) InvalidateAgenda(ctx context.Context, clinicaID, profesionalID s
 	}
 	return nil
 }
-
-// timeNow se mantiene aquí para que el normalizador del codec no dependa de
-// una interfaz de reloj en esta etapa.
-var timeNow = time.Now

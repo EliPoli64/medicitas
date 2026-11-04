@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // normalizeSnapshot completa los datos que la caché controla y normaliza los
@@ -28,7 +29,7 @@ func normalizeSnapshot(snapshot *Snapshot) {
 		snapshot.Espacios[i].Fin = snapshot.Espacios[i].Fin.UTC()
 	}
 	if snapshot.GeneradoEn.IsZero() {
-		snapshot.GeneradoEn = timeNow().UTC()
+		snapshot.GeneradoEn = time.Now().UTC()
 	} else {
 		snapshot.GeneradoEn = snapshot.GeneradoEn.UTC()
 	}
@@ -51,6 +52,11 @@ func decodeSnapshot(raw string, req Request) (Snapshot, error) {
 	}
 	if err := validateSnapshot(snapshot, req); err != nil {
 		return Snapshot{}, err
+	}
+	// Un productor anterior pudo serializar una lista vacía como null. Se
+	// normaliza para que la respuesta siempre tenga la misma forma.
+	if snapshot.Espacios == nil {
+		snapshot.Espacios = []Slot{}
 	}
 	return snapshot, nil
 }
