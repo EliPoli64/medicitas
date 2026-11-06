@@ -20,8 +20,44 @@ Regla de diseño: la API **no** confía un `clinica_id` del body/query para auto
 |------|-----|
 | [`id-provider/import/medicitas-realm.json`](../id-provider/import/medicitas-realm.json) | Realm importable |
 | [`id-provider/Dockerfile`](../id-provider/Dockerfile) | Copia `import/` a `/opt/keycloak/data/import/` |
-| [`docker-compose.yml`](../docker-compose.yml) | `keycloak` con `start-dev --import-realm` |
+| [`docker-compose.yml`](../docker-compose.yml) | `keycloak` con `start-dev --import-realm`; `api` recibe `KC_ISSUER_URL` / `KC_JWKS_URL` |
+| [`api/auth.go`](../api/auth.go) | Valida JWT (JWKS, iss, exp) y expone `authRequired` / `requireRole` |
 | [`.env.example`](../.env.example) | `KC_*`, `SEED_VERSION` y `SEED_USER_PASSWORD` |
+
+## La API valida el token
+
+La API **no** hace login. El cliente pide el token a Keycloak y lo manda en `Authorization: Bearer …`.
+
+1. Middleware lee el Bearer.
+2. Descarga/cachea llaves públicas desde `KC_JWKS_URL` (dentro de Compose: host `keycloak`).
+3. Verifica firma RS256, `iss` (`KC_ISSUER_URL` = localhost) y expiración.
+4. Lee `sub`, `preferred_username`, `realm_access.roles` y `clinica_id`.
+5. Sin token / token malo → **401**. Token OK sin el rol exigido por la ruta → **403**.
+
+`GET /me` solo exige token válido (cualquier rol) y responde la identidad. Rutas futuras usan `requireRole("recepcion")` (etc.) para la matriz RF17.
+
+```bash
+# 1) Token
+TOKEN=$(curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-connect/token" \
+  -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password" \
+  | jq -r .access_token)
+
+# 2) Identidad
+curl -s http://localhost:8080/me -H "Authorization: Bearer $TOKEN"
+```
+
+Ejemplo de respuesta:
+
+```json
+{
+  "sub": "…",
+  "username": "recep-norte",
+  "roles": ["recepcion"],
+  "clinicaId": "clinica-norte"
+}
+```
+
+Para `plat-admin`, `clinicaId` es `null`.
 
 ## Users de la semilla
 
@@ -47,9 +83,10 @@ Con Keycloak arriba (`http://localhost:6767`):
 curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-connect/token" \
   -d "client_id=api" \
   -d "username=recep-norte" \
-  -d "******" \
+  -d "password=recep123" \
   -d "grant_type=password"
 ```
+
 
 El `access_token` debe incluir:
 

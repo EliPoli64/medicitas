@@ -3,9 +3,8 @@
 # Servicios: aplicación, PostgreSQL, Keycloak, Redis y job de semilla.
 # Realm Keycloak versionado en id-provider/import/medicitas-realm.json.
 #
-# TODO al cerrar el diseño:
-#   - políticas de Redis / I8 (Cristian);
-#   - verificar que `docker compose up` deje el sistema operativo y poblado.
+# Auth JWT cableada en api (KC_ISSUER_URL / KC_JWKS_URL).
+# TODO: integración RF7 con Redis; dominio de citas; RLS/GRANTs.
 
 services:
   db:
@@ -105,6 +104,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PORT: ${API_PORT:-8080}
+      KC_ISSUER_URL: ${KC_ISSUER_URL}
+      KC_JWKS_URL: ${KC_JWKS_URL}
     ports:
       - "${API_PORT:-8080}:${API_PORT:-8080}"
     depends_on:
