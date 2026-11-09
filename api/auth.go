@@ -258,6 +258,28 @@ func requireRole(requiredRole string) gin.HandlerFunc {
 	}
 }
 
+// requirePerm exige JWT válido y permiso de matriz para la operación. 401 / 403.
+// Uso futuro: r.POST("/citas", requirePerm(OpReservarReprogramarCancelar), handler)
+func requirePerm(op Operation) gin.HandlerFunc {
+	if kcIssuer == "" || kcJWKSURL == "" {
+		log.Printf("auth: falta KC_ISSUER_URL o KC_JWKS_URL en el entorno")
+	}
+	return func(c *gin.Context) {
+		claims, err := parseBearer(c)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token inválido o ausente"})
+			return
+		}
+		id := identityFromClaims(claims)
+		if !Can(id.Roles, op) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "sin permiso para esta operación"})
+			return
+		}
+		c.Set(ctxIdentityKey, id)
+		c.Next()
+	}
+}
+
 func identityFromContext(c *gin.Context) (Identity, bool) {
 	v, ok := c.Get(ctxIdentityKey)
 	if !ok {

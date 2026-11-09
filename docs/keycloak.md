@@ -59,6 +59,28 @@ Ejemplo de respuesta:
 
 Para `plat-admin`, `clinicaId` es `null`.
 
+## Autorización (matriz RF17)
+
+Tras validar el token, la API decide **qué operaciones** puede intentar el rol (`api/permissions.go`).
+
+- `Can(roles, op)` — permiso base de la matriz del enunciado.
+- `requirePerm(op)` — middleware para rutas futuras (401 / 403).
+- `GET /permisos` — lista las operaciones permitidas para el token actual (demo).
+
+401 = identidad inválida. 403 = identidad OK pero la operación no está permitida para ese rol.
+
+Filas “solo propios” (horarios, notas): el rol `profesional` pasa la matriz; el handler del recurso debe comprobar ownership.
+
+```bash
+TOKEN=$(curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-connect/token" \
+  -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password" \
+  | jq -r .access_token)
+
+curl -s http://localhost:8080/permisos -H "Authorization: Bearer $TOKEN"
+```
+
+Ejemplo recepción: incluye `ReservarReprogramarCancelar`, no `AltaClinica` ni `Bitacora`.
+
 ## Users de la semilla
 
 La fuente canónica de usuarios demo está en [`seed/catalog.py`](../seed/catalog.py), pero el realm importado conserva dos users base: `plat-admin` y `recep-norte`. El seed crea/verifica el resto usando la Admin API y no reescribe passwords de users existentes.

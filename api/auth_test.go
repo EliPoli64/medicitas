@@ -252,7 +252,49 @@ func TestAuthTokenSinKid401(t *testing.T) {
 	}
 }
 
-func TestHealthReadyMeRouter(t *testing.T) {
+func probeRequirePerm(op Operation) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/x", requirePerm(op), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	return r
+}
+
+func TestRequirePermForbidden(t *testing.T) {
+	tk := newTestKeys(t)
+	srv := tk.jwksServer()
+	defer srv.Close()
+	withTestIssuer(t, srv.URL)
+	// recepción no puede AltaClinica
+	tok := tk.mint(testIssuer, time.Now().Add(time.Hour), true, []string{RoleRecepcion}, testKid, "clinica-norte")
+	if got, _ := doGet(t, probeRequirePerm(OpAltaClinica), "/x", tok); got != http.StatusForbidden {
+		t.Fatalf("recepción AltaClinica: got %d, want 403", got)
+	}
+}
+
+func TestRequirePermAllowed(t *testing.T) {
+	tk := newTestKeys(t)
+	srv := tk.jwksServer()
+	defer srv.Close()
+	withTestIssuer(t, srv.URL)
+	tok := tk.mint(testIssuer, time.Now().Add(time.Hour), true, []string{RoleRecepcion}, testKid, "clinica-norte")
+	if got, _ := doGet(t, probeRequirePerm(OpReservarReprogramarCancelar), "/x", tok); got != http.StatusOK {
+		t.Fatalf("recepción reservar: got %d, want 200", got)
+	}
+}
+
+func TestRequirePermUnauthorized(t *testing.T) {
+	tk := newTestKeys(t)
+	srv := tk.jwksServer()
+	defer srv.Close()
+	withTestIssuer(t, srv.URL)
+	if got, _ := doGet(t, probeRequirePerm(OpBitacora), "/x", ""); got != http.StatusUnauthorized {
+		t.Fatalf("sin token: got %d, want 401", got)
+	}
+}
+
+func TestHealthReadyMePermisosRouter(t *testing.T) {
 	tk := newTestKeys(t)
 	srv := tk.jwksServer()
 	defer srv.Close()
@@ -279,5 +321,33 @@ func TestHealthReadyMeRouter(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("/me sin token: %d", w.Code)
+	}
+
+	tok := tk.mint(testIssuer, time.Now().Add(time.Hour), true, []string{RoleRecepcion}, testKid, "clinica-norte")
+	code, w := doGet(t, r, "/permisos", tok)
+	if code != http.StatusOK {
+		t.Fatalf("/permisos: %d body=%s", code, w.Body.String())
+	}
+	var body struct {
+		Roles       []string `json:"roles"`
+		Operaciones []string `json:"operaciones"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	foundReserve, foundAlta := false, false
+	for _, o := range body.Operaciones {
+		if o == string(OpReservarReprogramarCancelar) {
+			foundReserve = true
+		}
+		if o == string(OpAltaClinica) {
+			foundAlta = true
+		}
+	}
+	if !foundReserve {
+		t.Fatalf("permisos recepción sin Reservar…: %v", body.Operaciones)
+	}
+	if foundAlta {
+		t.Fatalf("permisos recepción no debe incluir AltaClinica: %v", body.Operaciones)
 	}
 }

@@ -13,7 +13,7 @@ Enunciado del curso: [`spec.md`](spec.md).
 - **Pendiente de base de datos:** políticas RLS, roles de base de datos y `GRANT`s.
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
-- **API (identidad mínima):** Gin con `GET /health`, `GET /ready` y `GET /me` (JWT Bearer). Valida firma contra JWKS de Keycloak (`api/auth.go`). Matriz completa RF17 por ruta de dominio y CRUD de citas: pendiente.
+- **API (identidad + matriz RF17):** Gin con `GET /health`, `GET /ready`, `GET /me` y `GET /permisos`. JWT contra JWKS (`api/auth.go`); permisos por operación en `api/permissions.go` (`requirePerm`). CRUD de citas y cableado de cada ruta de dominio: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -66,8 +66,9 @@ TOKEN=$(curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-
   -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password" \
   | jq -r .access_token)
 
-# Identidad (API)
+# Identidad y permisos (API)
 curl -s http://localhost:8080/me -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/permisos -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/health
 ```
 

@@ -46,6 +46,24 @@ func setupRouter() *gin.Engine {
 		})
 	})
 
+	// Capacidades según matriz RF17 para el token actual (demo / defensa).
+	r.GET("/permisos", authRequired(), func(c *gin.Context) {
+		id, ok := identityFromContext(c)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "identidad no disponible"})
+			return
+		}
+		ops := AllowedOperations(id.Roles)
+		names := make([]string, len(ops))
+		for i, op := range ops {
+			names[i] = string(op)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"roles":      id.Roles,
+			"operaciones": names,
+		})
+	})
+
 	return r
 }
 
