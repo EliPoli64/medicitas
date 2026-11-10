@@ -132,6 +132,66 @@ func TestLoadDomainUser_StoreError500(t *testing.T) {
 	}
 }
 
+func TestAssertClinicaClaimAligned(t *testing.T) {
+	norte := "clinica-norte"
+	sur := "clinica-sur"
+	cases := []struct {
+		name    string
+		claim   string
+		domain  *string
+		wantErr bool
+	}{
+		{"sin claim con clinica BD", "", &norte, false},
+		{"plataforma sin claim ni BD", "", nil, false},
+		{"claim alineado", "clinica-norte", &norte, false},
+		{"claim distinto de BD", "clinica-sur", &norte, true},
+		{"claim con BD null", "clinica-norte", nil, true},
+		{"claim sur dominio sur", "clinica-sur", &sur, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := assertClinicaClaimAligned(
+				Identity{ClinicaID: tc.claim},
+				DomainUser{ClinicaIdentificador: tc.domain},
+			)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadDomainUser_ClaimMismatch403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	norte := "clinica-norte"
+	prev := userStore
+	userStore = &fakeUserStore{bySub: map[string]DomainUser{
+		"sub-1": {
+			UsuarioID: "u1", IdpSub: "sub-1", Activo: true,
+			ClinicaIdentificador: &norte, RolCodigo: "recepcion",
+		},
+	}}
+	t.Cleanup(func() { userStore = prev })
+
+	r := gin.New()
+	r.GET("/t", func(c *gin.Context) {
+		c.Set(ctxIdentityKey, Identity{Sub: "sub-1", ClinicaID: "clinica-sur"})
+		c.Next()
+	}, loadDomainUser(), func(c *gin.Context) {
+		t.Fatal("handler should not run")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d want 403 body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestFakeStore_FindByIdpSub(t *testing.T) {
 	clinica := "clinica-norte"
 	store := &fakeUserStore{bySub: map[string]DomainUser{

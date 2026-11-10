@@ -18,7 +18,7 @@ Reparto acordado en la práctica (Keycloak / Redis / semilla).
 
 ### B — Identidad y catálogo
 
-- Realm/roles + RF17 + vínculo IdP↔BD + primera lectura de pacientes: **hecho** (Matías).
+- Identidad delegada (rúbrica): **cerrada al 100 %** (Matías) — ver checklist en [`keycloak.md`](keycloak.md).
 - RF1–RF6 y resto de RF14 (alta/baja pacientes, catálogo): **pendiente** en API.
 
 ### C — Citas, concurrencia y caché

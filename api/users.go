@@ -97,9 +97,35 @@ func loadDomainUser() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "no se pudo resolver el usuario"})
 			return
 		}
+		if err := assertClinicaClaimAligned(id, du); err != nil {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		c.Set(ctxDomainUserKey, du)
 		c.Next()
 	}
+}
+
+// assertClinicaClaimAligned: la clínica de dominio es Postgres. Si el claim JWT
+// trae clinica_id y no coincide con la BD, se rechaza (I5 / token desfasado).
+func assertClinicaClaimAligned(id Identity, du DomainUser) error {
+	claim := id.ClinicaID
+	var domain string
+	if du.ClinicaIdentificador != nil {
+		domain = *du.ClinicaIdentificador
+	}
+	if claim == "" {
+		return nil // sin claim: se usa solo BD (o plataforma sin clínica)
+	}
+	if claim != domain {
+		return fmt.Errorf("clínica del token no coincide con el usuario registrado")
+	}
+	return nil
+}
+
+// secure encadena permiso de matriz + Usuario de dominio (patrón de rutas de negocio).
+func secure(op Operation) []gin.HandlerFunc {
+	return []gin.HandlerFunc{requirePerm(op), loadDomainUser()}
 }
 
 func domainUserFromContext(c *gin.Context) (DomainUser, bool) {

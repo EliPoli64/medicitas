@@ -39,6 +39,12 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       KC_HTTP_PORT: ${KC_HTTP_PORT:-6767}
       KC_HEALTH_ENABLED: "true"
+      # iss del JWT siempre localhost (coincide con KC_ISSUER_URL de la API),
+      # aunque el token se pida vía host.docker.internal u otro hostname.
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: ${KC_HTTP_PORT:-6767}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
     ports:

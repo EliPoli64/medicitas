@@ -69,7 +69,7 @@ func setupRouter() *gin.Engine {
 	})
 
 	// Lectura de pacientes de la clínica del Usuario de dominio (I5: tenant no viene del query).
-	r.GET("/pacientes", requirePerm(OpPacientesLectura), loadDomainUser(), listPacientes)
+	r.GET("/pacientes", append(secure(OpPacientesLectura), listPacientes)...)
 
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {

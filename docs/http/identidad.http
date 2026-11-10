@@ -1,0 +1,51 @@
+### MediCitas — colección identidad (RF17 / I5)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token recepción norte
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+### 2) Health / ready
+GET {{host}}/health
+
+GET {{host}}/ready
+
+### 3) Identidad (JWT + Usuario BD)
+GET {{host}}/me
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### 4) Matriz RF17 para el token
+GET {{host}}/permisos
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### 5) Pacientes de SU clínica (I5: clinicaId en query se ignora)
+GET {{host}}/pacientes?clinicaId=clinica-sur
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### 6) Token plataforma (no lee pacientes)
+# @name tokenPlat
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=plat-admin&password=plat123&grant_type=password
+
+### 7) plat-admin → /me OK (clinica null) ; /pacientes → 403
+GET {{host}}/me
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+
+GET {{host}}/pacientes
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+
+### 8) Sin token → 401
+GET {{host}}/me
+
+GET {{host}}/pacientes

@@ -20,7 +20,7 @@ Regla de diseño: la API **no** confía un `clinica_id` del body/query para auto
 |------|-----|
 | [`id-provider/import/medicitas-realm.json`](../id-provider/import/medicitas-realm.json) | Realm importable |
 | [`id-provider/Dockerfile`](../id-provider/Dockerfile) | Copia `import/` a `/opt/keycloak/data/import/` |
-| [`docker-compose.yml`](../docker-compose.yml) | `keycloak` con `start-dev --import-realm`; `api` recibe `KC_ISSUER_URL` / `KC_JWKS_URL` |
+| [`docker-compose.yml`](../docker-compose.yml) | `keycloak` con `start-dev --import-realm` y `KC_HOSTNAME=localhost` (iss estable); `api` recibe `KC_ISSUER_URL` / `KC_JWKS_URL` |
 | [`api/auth.go`](../api/auth.go) | Valida JWT (JWKS, iss, exp) y expone `authRequired` / `requireRole` |
 | [`api/users.go`](../api/users.go) | `UserStore` / `loadDomainUser`: `sub` → `"Usuario"` |
 | [`api/db.go`](../api/db.go) | Pool Postgres (`pgx`) y ping para `/ready` |
@@ -182,3 +182,39 @@ docker compose up --build db keycloak
 | Admin del contenedor | `KC_BOOTSTRAP_ADMIN_USERNAME` / `KC_BOOTSTRAP_ADMIN_PASSWORD` (token de admin master) |
 
 Verificado 2026-11-02: import OK; `recep-norte` mantiene `recep123`; `dra-garcia` usa `SEED_USER_PASSWORD`; ambos tokens traen `realm_access.roles` y `clinica_id="clinica-norte"`; `plat-admin` trae `adm-plataforma` sin `clinica_id`.
+
+## Checklist de aceptación — identidad (cerrado)
+
+Criterio del enunciado (*Identidad delegada*): realm/client al levantar, firma contra JWKS, roles → matriz, clínica asociada a la identidad (I5).
+
+| # | Criterio | Evidencia |
+|---|----------|-----------|
+| 1 | Keycloak en Compose con realm versionado | `id-provider/import/medicitas-realm.json` + servicio `keycloak` |
+| 2 | Client `api` + 4 roles de la matriz | mismo JSON |
+| 3 | Claim `clinica_id` en access token | mapper + atributo de usuario |
+| 4 | API valida firma RS256 / iss / exp vía JWKS | `api/auth.go` + tests |
+| 5 | Roles JWT → operaciones RF17 | `api/permissions.go`, `GET /permisos` |
+| 6 | Asociación IdP ↔ clínica documentada e implementada | `"Usuario"."idpSub"` = JWT `sub`; `api/users.go` |
+| 7 | Clínica de dominio desde Postgres (no body/query) | `GET /pacientes` ignora `?clinicaId=` |
+| 8 | Claim JWT alineado con BD (si viene) | `assertClinicaClaimAligned` → 403 si diverge |
+| 9 | Rutas protegidas con patrón `secure(op)` | `requirePerm` + `loadDomainUser` |
+| 10 | `/ready` refleja dependencia real de Postgres | Ping en `api/db.go` |
+| 11 | Colección de peticiones versionada | [`docs/http/identidad.http`](http/identidad.http) |
+| 12 | Test de integración contra Compose | `go test -tags=integration` (`identity_integration_test.go`) |
+
+### Cómo verificar en local
+
+```bash
+docker compose up --build -d
+# unitarios
+docker run --rm -v "$PWD:/app" -w /app/api golang:1.25-alpine go test ./...
+# integración: el token debe pedirse al MISMO host que KC_ISSUER_URL (localhost),
+# si no el `iss` del JWT no coincide y la API responde 401.
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e API_BASE=http://host.docker.internal:8080 \
+  -e KC_TOKEN_URL=http://host.docker.internal:6767/realms/medicitas/protocol/openid-connect/token \
+  -v "$PWD:/app" -w /app/api golang:1.25-alpine \
+  go test -tags=integration -count=1 -run TestIntegrationIdentity ./...
+```
+
+En Windows (PowerShell), smoke: [`scripts/smoke-identidad.ps1`](../scripts/smoke-identidad.ps1).
