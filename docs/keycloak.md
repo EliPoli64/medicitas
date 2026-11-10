@@ -12,7 +12,7 @@ Guía del IdP (RF17 / I5). Responsable: **Matías**. Redis lo lleva Cristian; la
 | **Claim clínica** | De dónde sale el tenant | no existía | atributo de usuario `clinica_id` → claim homónimo en el access token |
 | **Users de prueba** | Quién obtiene tokens | en el JSON del realm | dos base en el JSON; el resto los crea/verifica el seed (Admin API) |
 
-Regla de diseño: la API **no** confía un `clinica_id` del body/query para autorizar. Lee identidad del token (`sub` + roles + `clinica_id`) y cruza con `usuario` en Postgres.
+Regla de diseño: la API **no** confía un `clinica_id` del body/query para autorizar. Lee identidad del token (`sub` + roles + `clinica_id`) y **resuelve la fila** `"Usuario"` en Postgres por `idpSub = JWT.sub`. La clínica de dominio sale de `"Usuario"."clinicaId"` → `"Clinica"."identificador"`, no del body.
 
 ## Archivos
 
@@ -22,6 +22,8 @@ Regla de diseño: la API **no** confía un `clinica_id` del body/query para auto
 | [`id-provider/Dockerfile`](../id-provider/Dockerfile) | Copia `import/` a `/opt/keycloak/data/import/` |
 | [`docker-compose.yml`](../docker-compose.yml) | `keycloak` con `start-dev --import-realm`; `api` recibe `KC_ISSUER_URL` / `KC_JWKS_URL` |
 | [`api/auth.go`](../api/auth.go) | Valida JWT (JWKS, iss, exp) y expone `authRequired` / `requireRole` |
+| [`api/users.go`](../api/users.go) | `UserStore` / `loadDomainUser`: `sub` → `"Usuario"` |
+| [`api/db.go`](../api/db.go) | Pool Postgres (`pgx`) y ping para `/ready` |
 | [`.env.example`](../.env.example) | `KC_*`, `SEED_VERSION` y `SEED_USER_PASSWORD` |
 
 ## La API valida el token
@@ -34,7 +36,7 @@ La API **no** hace login. El cliente pide el token a Keycloak y lo manda en `Aut
 4. Lee `sub`, `preferred_username`, `realm_access.roles` y `clinica_id`.
 5. Sin token / token malo → **401**. Token OK sin el rol exigido por la ruta → **403**.
 
-`GET /me` solo exige token válido (cualquier rol) y responde la identidad. Rutas futuras usan `requireRole("recepcion")` (etc.) para la matriz RF17.
+`GET /me` y `GET /permisos` exigen token válido **y** fila `"Usuario"` activa (`authRequired` + `loadDomainUser`). Rutas futuras usan `requirePerm(...)` / `requireRole(...)` para la matriz RF17; `Can(...)` sigue leyendo roles del JWT.
 
 ```bash
 # 1) Token
@@ -42,7 +44,7 @@ TOKEN=$(curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-
   -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password" \
   | jq -r .access_token)
 
-# 2) Identidad
+# 2) Identidad (JWT + fila Postgres)
 curl -s http://localhost:8080/me -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -53,21 +55,53 @@ Ejemplo de respuesta:
   "sub": "…",
   "username": "recep-norte",
   "roles": ["recepcion"],
-  "clinicaId": "clinica-norte"
+  "clinicaIdClaim": "clinica-norte",
+  "usuarioId": "…",
+  "idpSub": "…",
+  "activo": true,
+  "clinicaIdentificador": "clinica-norte",
+  "rolCodigo": "recepcion"
 }
 ```
 
-Para `plat-admin`, `clinicaId` es `null`.
+Para `plat-admin`, `clinicaIdentificador` y `clinicaIdClaim` son `null`. Un JWT válido cuyo `sub` no exista en `"Usuario"` → **403** (`usuario no registrado`). Usuario con `activo=false` → **403**.
+
+`GET /ready` exige config Keycloak **y** `Ping` a Postgres (503 si la BD cae).
+
+### Primera ruta de dominio: `GET /pacientes`
+
+Lista pacientes **activos** de la clínica del Usuario de dominio (`requirePerm(PacientesLectura)` + `loadDomainUser`). El tenant sale de Postgres; un `?clinicaId=` en el query **se ignora** (I5).
+
+```bash
+curl -s "http://localhost:8080/pacientes?clinicaId=clinica-sur" \
+  -H "Authorization: Bearer $TOKEN"
+# Con recep-norte → solo pacientes de clinica-norte
+```
+
+`plat-admin` → **403** (sin permiso de lectura de pacientes). Archivo: [`api/patients.go`](../api/patients.go).
+
+## Asociación IdP ↔ Usuario
+
+| Capa | Qué guarda | Cómo se une |
+|------|------------|-------------|
+| Keycloak | `sub` del access token | identidad OIDC |
+| Postgres `"Usuario"."idpSub"` | mismo UUID que el `sub` | el seed lo escribe al crear/verificar el user |
+| Postgres `"Usuario"."clinicaId"` | FK a `"Clinica"` | tenant de dominio (preferido para autorizar/aislar) |
+| Claim JWT `clinica_id` | atributo Keycloak | útil al cliente; la API no lo usa como única verdad |
+
+Archivos: [`api/db.go`](../api/db.go) (pool/pgx), [`api/users.go`](../api/users.go) (`UserStore.FindByIdpSub`, `loadDomainUser`).
+
+Códigos de rol en BD (`adm_plataforma`, `adm_clinica`, …) vs realm (`adm-plataforma`, …): el seed los alinea; `Can` / `requirePerm` usan el rol **JWT**.
 
 ## Autorización (matriz RF17)
 
-Tras validar el token, la API decide **qué operaciones** puede intentar el rol (`api/permissions.go`).
+Tras validar el token y resolver el usuario de dominio, la API decide **qué operaciones** puede intentar el rol (`api/permissions.go`).
 
-- `Can(roles, op)` — permiso base de la matriz del enunciado.
-- `requirePerm(op)` — middleware para rutas futuras (401 / 403).
-- `GET /permisos` — lista las operaciones permitidas para el token actual (demo).
+- `Can(roles, op)` — permiso base de la matriz del enunciado (roles JWT).
+- `requirePerm(op)` — middleware en rutas de dominio (401 / 403); ya usado en `GET /pacientes`.
+- `GET /permisos` — lista las operaciones permitidas para el token actual (demo) e incluye `usuarioId` / `rolCodigo` de BD.
 
-401 = identidad inválida. 403 = identidad OK pero la operación no está permitida para ese rol.
+401 = identidad inválida. 403 = no registrado / inactivo, o identidad OK pero la operación no está permitida para ese rol.
 
 Filas “solo propios” (horarios, notas): el rol `profesional` pasa la matriz; el handler del recurso debe comprobar ownership.
 

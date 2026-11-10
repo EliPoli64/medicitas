@@ -6,6 +6,20 @@ Núcleo transaccional: API REST **sin interfaz gráfica**, clínicas aisladas, a
 
 Enunciado del curso: [`spec.md`](spec.md).
 
+## Servicios en Etapa 1
+
+El enunciado pide **varios servicios** (no un solo proceso que haga login + BD + caché). En Etapa 1 eso es el Compose, no un microservicio por entidad de negocio:
+
+| Servicio | Rol |
+|----------|-----|
+| `api` | Dominio HTTP (JWT, permisos, rutas) |
+| `db` | Fuente de verdad relacional (Postgres) |
+| `keycloak` | Identidad OIDC |
+| `redis` | Caché de disponibilidad |
+| `seed` | Job one-shot de datos demo |
+
+La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario"."idpSub"` = JWT `sub` (ver [`docs/keycloak.md`](docs/keycloak.md)). Partir citas/pacientes en servicios separados no es requisito de Etapa 1; la distribución fuerte es Etapa 2.
+
 ## Estado actual
 
 - Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
@@ -13,7 +27,7 @@ Enunciado del curso: [`spec.md`](spec.md).
 - **Pendiente de base de datos:** políticas RLS, roles de base de datos y `GRANT`s.
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
-- **API (identidad + matriz RF17):** Gin con `GET /health`, `GET /ready`, `GET /me` y `GET /permisos`. JWT contra JWKS (`api/auth.go`); permisos por operación en `api/permissions.go` (`requirePerm`). CRUD de citas y cableado de cada ruta de dominio: pendiente.
+- **API (identidad + matriz RF17 + Usuario BD):** Gin con `GET /health`, `GET /ready` (Ping Postgres), `GET /me`, `GET /permisos` y `GET /pacientes` (tenant desde BD, I5). JWT contra JWKS (`api/auth.go`); resolución `sub` → `"Usuario"."idpSub"` (`api/users.go`); permisos por operación en `api/permissions.go` (`requirePerm`). Resto del CRUD de dominio: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -66,13 +80,15 @@ TOKEN=$(curl -s -X POST "http://localhost:6767/realms/medicitas/protocol/openid-
   -d "client_id=api" -d "username=recep-norte" -d "password=recep123" -d "grant_type=password" \
   | jq -r .access_token)
 
-# Identidad y permisos (API)
+# Identidad (JWT + fila Usuario en Postgres), permisos y pacientes
 curl -s http://localhost:8080/me -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/permisos -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/pacientes -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/health
+curl -s http://localhost:8080/ready
 ```
 
-Detalle: [`docs/keycloak.md`](docs/keycloak.md).
+`/me` incluye `usuarioId`, `clinicaIdentificador` y `rolCodigo` desde Postgres (vía `idpSub`). `/pacientes` lista solo la clínica del usuario (ignora `?clinicaId=`). `/ready` falla si Postgres no responde. Detalle: [`docs/keycloak.md`](docs/keycloak.md).
 
 ## División del trabajo
 

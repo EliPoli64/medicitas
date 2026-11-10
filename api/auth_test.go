@@ -3,6 +3,7 @@ package main
 // Unit tests for Keycloak auth. No Docker: throwaway RSA + httptest JWKS.
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -299,6 +300,24 @@ func TestHealthReadyMePermisosRouter(t *testing.T) {
 	srv := tk.jwksServer()
 	defer srv.Close()
 	withTestIssuer(t, srv.URL)
+
+	prevPing := pingDBFn
+	pingDBFn = func(context.Context) error { return nil }
+	t.Cleanup(func() { pingDBFn = prevPing })
+
+	clinica := "clinica-norte"
+	prevStore := userStore
+	userStore = &fakeUserStore{bySub: map[string]DomainUser{
+		"test-user": {
+			UsuarioID:            "uuid-test",
+			IdpSub:               "test-user",
+			Activo:               true,
+			ClinicaIdentificador: &clinica,
+			RolCodigo:            "recepcion",
+		},
+	}}
+	t.Cleanup(func() { userStore = prevStore })
+
 	gin.SetMode(gin.TestMode)
 	r := setupRouter()
 
@@ -331,9 +350,13 @@ func TestHealthReadyMePermisosRouter(t *testing.T) {
 	var body struct {
 		Roles       []string `json:"roles"`
 		Operaciones []string `json:"operaciones"`
+		UsuarioID   string   `json:"usuarioId"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
+	}
+	if body.UsuarioID != "uuid-test" {
+		t.Fatalf("usuarioId=%q want uuid-test", body.UsuarioID)
 	}
 	foundReserve, foundAlta := false, false
 	for _, o := range body.Operaciones {
@@ -349,5 +372,12 @@ func TestHealthReadyMePermisosRouter(t *testing.T) {
 	}
 	if foundAlta {
 		t.Fatalf("permisos recepción no debe incluir AltaClinica: %v", body.Operaciones)
+	}
+
+	// JWT válido sin fila Usuario → 403
+	userStore = &fakeUserStore{bySub: map[string]DomainUser{}}
+	code, w = doGet(t, r, "/me", tok)
+	if code != http.StatusForbidden {
+		t.Fatalf("/me sin usuario BD: %d body=%s", code, w.Body.String())
 	}
 }
