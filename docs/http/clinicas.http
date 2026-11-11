@@ -1,0 +1,86 @@
+### MediCitas — colección RF1 (alta de clínica + primer administrador)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token del administrador de plataforma
+# @name tokenPlat
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=plat-admin&password=plat123&grant_type=password
+
+### 2) RF1: alta de clínica con su primer administrador
+### 201 con {clinica, administrador}. 400 inválida, 401 sin token,
+### 403 rol incorrecto, 409 identificador o username duplicado, 502 IdP caído.
+# @name altaClinica
+POST {{host}}/clinicas
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "nombre": "Clínica Este",
+  "identificador": "clinica-este",
+  "zonaHoraria": "America/Costa_Rica",
+  "administrador": {
+    "username": "adm-este",
+    "password": "secret123",
+    "nombre": "Ana",
+    "apellido": "Méndez"
+  }
+}
+
+### 3) Login del administrador recién creado (identidad en Keycloak)
+# @name tokenAdmEste
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-este&password=secret123&grant_type=password
+
+### 4) /me ancla al admin nuevo a su clínica (identidad ↔ dominio)
+GET {{host}}/me
+Authorization: Bearer {{tokenAdmEste.response.body.access_token}}
+
+### --- Casos negativos ---
+
+### 5) Sin token → 401
+POST {{host}}/clinicas
+Content-Type: application/json
+
+{"nombre": "X", "identificador": "clinica-x", "administrador": {"username": "adm-x", "password": "secret123"}}
+
+### 6) Rol que no corresponde (recepción) → 403
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+###
+POST {{host}}/clinicas
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{"nombre": "X", "identificador": "clinica-x", "administrador": {"username": "adm-x", "password": "secret123"}}
+
+### 7) Identificador duplicado → 409
+POST {{host}}/clinicas
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "nombre": "Clínica Este",
+  "identificador": "clinica-este",
+  "administrador": {"username": "adm-otro", "password": "secret123"}
+}
+
+### 8) Entrada inválida → 400 con detalles
+POST {{host}}/clinicas
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+Content-Type: application/json
+
+{"nombre": "", "identificador": "Clínica Este", "zonaHoraria": "Marte/Olympus"}

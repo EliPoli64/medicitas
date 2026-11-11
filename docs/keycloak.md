@@ -183,6 +183,14 @@ docker compose up --build db keycloak
 
 Verificado 2026-11-02: import OK; `recep-norte` mantiene `recep123`; `dra-garcia` usa `SEED_USER_PASSWORD`; ambos tokens traen `realm_access.roles` y `clinica_id="clinica-norte"`; `plat-admin` trae `adm-plataforma` sin `clinica_id`.
 
+## Admin API desde la API (RF1/RF2)
+
+La API no escribe usuarios a mano: [`api/keycloak_admin.go`](../api/keycloak_admin.go) provisiona identidades con la misma Admin API que usa el seed (`admin-cli` contra el realm master con `KC_BOOTSTRAP_ADMIN_*`, alcanzable por `KC_ADMIN_URL=http://keycloak:6767` dentro del Compose).
+
+- `POST /clinicas` (RF1) crea el usuario con rol de realm `adm-clinica` y atributo `clinica_id` = identificador de la clínica nueva; el `sub` devuelto por Keycloak se guarda como `"Usuario"."idpSub"`.
+- Orden **IdP → Postgres** (obligado: `idpSub` es `NOT NULL UNIQUE`) con **compensación**: si la transacción de dominio falla, se elimina la identidad recién creada. No hay XA entre servicios; una caída entre ambos pasos deja una identidad huérfana que no alcanza dato de ninguna clínica (sin fila `"Usuario"` no hay tenant, I5 se sostiene).
+- Alternativa considerada para Etapa 2: client dedicado con service account y solo `realm-management/manage-users` (menor privilegio que el admin de arranque). Exige cambiar el realm importado y sus service-account role mappings; queda pendiente del endurecimiento del despliegue.
+
 ## Checklist de aceptación — identidad (cerrado)
 
 Criterio del enunciado (*Identidad delegada*): realm/client al levantar, firma contra JWKS, roles → matriz, clínica asociada a la identidad (I5).

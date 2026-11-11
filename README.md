@@ -28,6 +28,7 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
 - **Identidad (Matías) — cerrada:** Keycloak realm + JWT/JWKS + matriz RF17 + `sub`→`"Usuario"` + alineación claim/BD + `GET /pacientes` (I5). Rutas: `/health`, `/ready`, `/me`, `/permisos`, `/pacientes`. Colección [`docs/http/identidad.http`](docs/http/identidad.http); smoke [`scripts/smoke-identidad.ps1`](scripts/smoke-identidad.ps1); integración `go test -tags=integration`. Checklist en [`docs/keycloak.md`](docs/keycloak.md). Resto del CRUD de dominio: pendiente.
+- **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`). RF2–RF4: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -89,6 +90,56 @@ curl -s http://localhost:8080/ready
 ```
 
 `/me` incluye `usuarioId`, `clinicaIdentificador` y `rolCodigo` desde Postgres (vía `idpSub`). `/pacientes` lista solo la clínica del usuario (ignora `?clinicaId=`). `/ready` falla si Postgres no responde. Detalle: [`docs/keycloak.md`](docs/keycloak.md).
+
+## Contrato de rutas
+
+### `POST /clinicas` — RF1: alta de clínica + primer administrador
+
+Permiso (matriz RF17): **solo `adm-plataforma`**. Crea la clínica y su primer usuario `adm_clinica` en una sola transacción, y provisiona la identidad en Keycloak (rol de realm `adm-clinica`, atributo `clinica_id`).
+
+Entrada:
+
+```json
+{
+  "nombre": "Clínica Este",
+  "identificador": "clinica-este",
+  "zonaHoraria": "America/Costa_Rica",
+  "administrador": {
+    "username": "adm-este",
+    "password": "secret123",
+    "email": "opcional@dominio",
+    "nombre": "opcional",
+    "apellido": "opcional"
+  }
+}
+```
+
+- `identificador`: `^[a-z0-9]+(-[a-z0-9]+)*$` (mismo CHECK que la BD).
+- `zonaHoraria`: zona IANA; si se omite, `America/Costa_Rica` (default del esquema).
+- `administrador.password`: mínimo 8 caracteres.
+
+Salida `201`:
+
+```json
+{
+  "clinica":       {"id": "…", "identificador": "clinica-este", "nombre": "…", "zonaHoraria": "…", "activo": true, "creadoEn": "…"},
+  "administrador": {"usuarioId": "…", "idpSub": "…", "username": "adm-este", "rolCodigo": "adm_clinica"}
+}
+```
+
+| Código | Cuándo |
+|--------|--------|
+| `201` | Clínica y administrador creados |
+| `400` | JSON mal formado o campos inválidos (incluye `detalles`) |
+| `401` | Sin token o token inválido |
+| `403` | Token válido sin el rol de la matriz |
+| `409` | `identificador` ya existe, o `username` ya existe en Keycloak |
+| `502` | Keycloak no provisiona la identidad |
+| `500` | Falla la transacción (se compensa eliminando la identidad creada) |
+
+Notas de diseño (defensa): la identidad se crea **antes** que la fila porque `"Usuario"."idpSub"` es `NOT NULL UNIQUE`; si la transacción falla se elimina la identidad (saga con compensación, sin XA). Una caída entre ambos pasos deja una identidad huérfana en Keycloak que no alcanza dato alguno (sin fila `"Usuario"` no hay tenant: I5 se sostiene), y queda en logs.
+
+Colección de peticiones: [`docs/http/clinicas.http`](docs/http/clinicas.http).
 
 ## División del trabajo
 

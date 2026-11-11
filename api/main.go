@@ -71,6 +71,9 @@ func setupRouter() *gin.Engine {
 	// Lectura de pacientes de la clínica del Usuario de dominio (I5: tenant no viene del query).
 	r.GET("/pacientes", append(secure(OpPacientesLectura), listPacientes)...)
 
+	// RF1: alta de clínica + primer administrador (matriz: solo adm-plataforma).
+	r.POST("/clinicas", append(secure(OpAltaClinica), createClinica)...)
+
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {
 		id, ok := identityFromContext(c)
@@ -110,6 +113,8 @@ func main() {
 	}
 	userStore = newPGUserStore(db)
 	patientStore = newPGPatientStore(db)
+	clinicStore = newPGClinicStore(db)
+	identityAdmin = newHTTPIdentityAdminFromEnv()
 	if err := setupRouter().Run(":" + port); err != nil {
 		panic(err)
 	}
