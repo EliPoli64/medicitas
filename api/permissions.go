@@ -24,6 +24,9 @@ const (
 	OpNotaClinica                 Operation = "NotaClinica"
 	OpHistorialPaciente           Operation = "HistorialPaciente"
 	OpBitacora                    Operation = "Bitacora"
+	// Extensión documentada de la matriz (operación diaria; no figuran en el PDF).
+	OpAgendaDia                   Operation = "AgendaDia"
+	OpConteoCitas                 Operation = "ConteoCitas"
 
 	RoleAdmPlataforma = "adm-plataforma"
 	RoleAdmClinica    = "adm-clinica"
@@ -44,6 +47,8 @@ var matrix = map[Operation][]string{
 	OpNotaClinica:                 {RoleProfesional}, // solo citas propias (handler)
 	OpHistorialPaciente:           {RoleAdmClinica, RoleRecepcion, RoleProfesional},
 	OpBitacora:                    {RoleAdmClinica},
+	OpAgendaDia:                   {RoleAdmClinica, RoleRecepcion, RoleProfesional}, // profesional: solo propia (handler)
+	OpConteoCitas:                 {RoleAdmClinica, RoleRecepcion, RoleProfesional}, // profesional: solo propias (handler)
 }
 
 // AllOperations orden estable para /permisos y tests.
@@ -60,6 +65,8 @@ func AllOperations() []Operation {
 		OpNotaClinica,
 		OpHistorialPaciente,
 		OpBitacora,
+		OpAgendaDia,
+		OpConteoCitas,
 	}
 }
 

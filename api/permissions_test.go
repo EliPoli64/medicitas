@@ -54,6 +54,15 @@ func TestCanMatrixCells(t *testing.T) {
 		{OpBitacora, RoleAdmClinica, true},
 		{OpBitacora, RoleRecepcion, false},
 		{OpBitacora, RoleAdmPlataforma, false},
+
+		// Agenda del día / conteo (extensión documentada)
+		{OpAgendaDia, RoleAdmClinica, true},
+		{OpAgendaDia, RoleRecepcion, true},
+		{OpAgendaDia, RoleProfesional, true},
+		{OpAgendaDia, RoleAdmPlataforma, false},
+		{OpConteoCitas, RoleRecepcion, true},
+		{OpConteoCitas, RoleProfesional, true},
+		{OpConteoCitas, RoleAdmPlataforma, false},
 	}
 	for _, tc := range cases {
 		got := Can([]string{tc.role}, tc.op)
@@ -97,6 +106,9 @@ func TestAllowedOperationsRecepcion(t *testing.T) {
 	}
 	if has(OpNotaClinica) {
 		t.Fatal("recepción no debería escribir notas")
+	}
+	if !has(OpAgendaDia) || !has(OpConteoCitas) {
+		t.Fatal("recepción debería ver agenda y conteo")
 	}
 }
 

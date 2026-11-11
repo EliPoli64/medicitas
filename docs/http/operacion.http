@@ -1,0 +1,43 @@
+### MediCitas — RF20 agenda del día + RF21 conteo por estado
+### Requiere: docker compose up
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### Token recepción norte
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+### Agenda del día (toda la clínica; I5 ignora clinicaId)
+GET {{host}}/agenda?fecha=2026-11-12&clinicaId=clinica-sur
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Agenda filtrada por profesional
+GET {{host}}/agenda?fecha=2026-11-12&profesionalId={{profesionalId}}
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Resumen por estado (mes)
+GET {{host}}/citas/resumen?desde=2026-11-01&hasta=2026-11-30
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Token profesional (solo su agenda / su conteo)
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password={{$dotenv SEED_USER_PASSWORD}}&grant_type=password
+
+GET {{host}}/agenda?fecha=2026-11-12
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+### Profesional pidiendo otro profesionalId → 403
+GET {{host}}/agenda?fecha=2026-11-12&profesionalId=00000000-0000-0000-0000-000000000099
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+GET {{host}}/citas/resumen?desde=2026-11-01&hasta=2026-11-30
+Authorization: Bearer {{tokenProf.response.body.access_token}}

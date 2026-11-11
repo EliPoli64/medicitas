@@ -111,6 +111,11 @@ func setupRouter() *gin.Engine {
 	r.POST("/profesionales/:id/bloqueos", append(secure(OpHorariosBloqueos), createBloqueo)...)
 	r.DELETE("/bloqueos/:id", append(secure(OpHorariosBloqueos), deleteBloqueo)...)
 
+	// RF20: agenda del día (zona de la clínica).
+	r.GET("/agenda", append(secure(OpAgendaDia), getAgenda)...)
+	// RF21: conteo de citas por estado.
+	r.GET("/citas/resumen", append(secure(OpConteoCitas), getCitasResumen)...)
+
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {
 		id, ok := identityFromContext(c)
@@ -157,6 +162,8 @@ func main() {
 	disponibilidadStore = newPGDisponibilidadStore(db)
 	scheduleStore = newPGScheduleStore(db)
 	blockStore = newPGBlockStore(db)
+	agendaStore = newPGAgendaStore(db)
+	statsStore = newPGStatsStore(db)
 	identityAdmin = newHTTPIdentityAdminFromEnv()
 	if err := setupRouter().Run(":" + port); err != nil {
 		panic(err)

@@ -32,7 +32,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`.
 - **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http).
 - **RF14 + RF16 (pacientes) — implementado:** listado/detalle/alta/actualización de pacientes y contactos (`OpPacientesLectura` / `OpPacientesEscritura`) e historial de citas `GET /pacientes/:id/citas` (`OpHistorialPaciente`). Colección [`docs/http/pacientes.http`](docs/http/pacientes.http).
-- **RF7–RF8 (disponibilidad) — implementado:** `GET /profesionales/:id/disponibilidad` (espacios del día: horario − bloqueos − citas vigentes, rejilla configurable, espejo de los triggers del motor) y `GET /servicios/:id/disponibilidad` (por servicio en un rango, con profesionales y sus espacios) bajo `OpConsultarDisponibilidad`. Índices justificados con `EXPLAIN ANALYZE` sobre dataset sintético ([`docs/bench/disponibilidad_bench.sql`](docs/bench/disponibilidad_bench.sql)) en [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http); prueba de integración `TestIntegrationRF7RF8Disponibilidad`. RF9–RF13, RF15, RF18–RF21 y cableado de la caché Redis: pendiente.
+- **RF7–RF8 (disponibilidad) — implementado:** `GET /profesionales/:id/disponibilidad` (espacios del día: horario − bloqueos − citas vigentes, rejilla configurable, espejo de los triggers del motor) y `GET /servicios/:id/disponibilidad` (por servicio en un rango, con profesionales y sus espacios) bajo `OpConsultarDisponibilidad`. Índices justificados con `EXPLAIN ANALYZE` sobre dataset sintético ([`docs/bench/disponibilidad_bench.sql`](docs/bench/disponibilidad_bench.sql)) en [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http); prueba de integración `TestIntegrationRF7RF8Disponibilidad`. RF9–RF13, RF15, RF18–RF19 y cableado de la caché Redis: pendiente.
+- **RF20 + RF21 (operación diaria) — implementado:** agenda del día `GET /agenda?fecha=` (`OpAgendaDia`, día en `zonaHoraria` de la clínica) y conteo por estado `GET /citas/resumen?desde=&hasta=` (`OpConteoCitas`). Profesional solo ve lo propio. Colección [`docs/http/operacion.http`](docs/http/operacion.http). Mapa vivo: [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md).
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -204,6 +205,15 @@ Modelo de cálculo, contrato completo e **justificación de índices con planes 
 
 Colección: [`docs/http/pacientes.http`](docs/http/pacientes.http).
 
+### Agenda del día y conteo — RF20 / RF21
+
+Permiso (extensión documentada de la matriz): **`adm-clinica`**, **`recepcion`**, **`profesional`** (solo propios). Tenant desde BD (I5); `?clinicaId=` se ignora. El día/rango usa la `zonaHoraria` de la clínica, no UTC a ciegas.
+
+- `GET /agenda?fecha=YYYY-MM-DD[&profesionalId=]` — citas con `inicio` en ese día calendario; joins a paciente/servicio. Profesional sin filtro → se fuerza al suyo; otro id → `403`.
+- `GET /citas/resumen?desde=&hasta=` — conteo por cada `"EstadoCita"` (`reservada`, `atendida`, `ausente`, `cancelada`, `reprogramada`) más `total`; claves ausentes → `0`.
+
+Colección: [`docs/http/operacion.http`](docs/http/operacion.http). Arquitectura: [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md).
+
 ## División del trabajo
 
 | Quién | Encargo |
@@ -230,6 +240,7 @@ Compose, imagen Keycloak e idea de JWT ya están adaptados. Pendiente útil de T
 | [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md) | Diseño, claves, invalidación y pruebas de la caché Redis |
 | [`docs/keycloak.md`](docs/keycloak.md) | Realm, roles, tokens, contrato seeder |
 | [`docs/division-trabajo.md`](docs/division-trabajo.md) | Matías / Cristian / Elías |
+| [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md) | Mapa Compose + tabla de progreso RF |
 
 ## Pregunta rectora (defensa)
 
