@@ -68,8 +68,14 @@ func setupRouter() *gin.Engine {
 		})
 	})
 
-	// Lectura de pacientes de la clínica del Usuario de dominio (I5: tenant no viene del query).
+	// RF14 lectura + RF16 historial; escritura con OpPacientesEscritura.
 	r.GET("/pacientes", append(secure(OpPacientesLectura), listPacientes)...)
+	r.POST("/pacientes", append(secure(OpPacientesEscritura), createPaciente)...)
+	r.GET("/pacientes/:id", append(secure(OpPacientesLectura), getPaciente)...)
+	r.PATCH("/pacientes/:id", append(secure(OpPacientesEscritura), updatePaciente)...)
+	r.POST("/pacientes/:id/contactos", append(secure(OpPacientesEscritura), createContacto)...)
+	r.GET("/pacientes/:id/citas", append(secure(OpHistorialPaciente), listPacienteCitas)...)
+	r.PATCH("/contactos/:id", append(secure(OpPacientesEscritura), updateContacto)...)
 
 	// RF1: alta de clínica + primer administrador (matriz: solo adm-plataforma).
 	r.POST("/clinicas", append(secure(OpAltaClinica), createClinica)...)

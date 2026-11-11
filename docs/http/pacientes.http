@@ -1,0 +1,82 @@
+### MediCitas — RF14 pacientes/contactos + RF16 historial
+### Requiere: docker compose up
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### Token recepción norte
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+### Listar pacientes (I5: clinicaId se ignora)
+GET {{host}}/pacientes?clinicaId=clinica-sur
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Crear paciente + contactos (RF14)
+# @name crearPaciente
+POST {{host}}/pacientes
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "identificacion": "1-1111-9999",
+  "nombre": "Paciente Demo",
+  "fechaNacimiento": "1992-08-15",
+  "contactos": [
+    { "tipoCodigo": "telefono", "valor": "+50688880000", "esPrincipal": true },
+    { "tipoCodigo": "email", "valor": "demo@medicitas.local", "esPrincipal": true }
+  ]
+}
+
+### Detalle paciente
+GET {{host}}/pacientes/{{pacienteId}}
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Actualizar paciente
+PATCH {{host}}/pacientes/{{pacienteId}}
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "nombre": "Paciente Demo Actualizado"
+}
+
+### Agregar contacto
+POST {{host}}/pacientes/{{pacienteId}}/contactos
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "tipoCodigo": "direccion",
+  "valor": "San José, Costa Rica",
+  "esPrincipal": true
+}
+
+### Historial de citas (RF16)
+GET {{host}}/pacientes/{{pacienteId}}/citas
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### Token profesional (puede leer, no escribir)
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password={{$dotenv SEED_USER_PASSWORD}}&grant_type=password
+
+GET {{host}}/pacientes
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+POST {{host}}/pacientes
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "identificacion": "x",
+  "nombre": "no",
+  "fechaNacimiento": "1990-01-01"
+}

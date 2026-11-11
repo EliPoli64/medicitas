@@ -30,7 +30,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **Identidad (Matías) — cerrada:** Keycloak realm + JWT/JWKS + matriz RF17 + `sub`→`"Usuario"` + alineación claim/BD + `GET /pacientes` (I5). Rutas: `/health`, `/ready`, `/me`, `/permisos`, `/pacientes`. Colección [`docs/http/identidad.http`](docs/http/identidad.http); smoke [`scripts/smoke-identidad.ps1`](scripts/smoke-identidad.ps1); integración `go test -tags=integration`. Checklist en [`docs/keycloak.md`](docs/keycloak.md). Resto del CRUD de dominio: pendiente.
 - **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`).
 - **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`.
-- **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http). RF7–RF21: pendiente.
+- **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http).
+- **RF14 + RF16 (pacientes) — implementado:** listado/detalle/alta/actualización de pacientes y contactos (`OpPacientesLectura` / `OpPacientesEscritura`) e historial de citas `GET /pacientes/:id/citas` (`OpHistorialPaciente`). Colección [`docs/http/pacientes.http`](docs/http/pacientes.http). RF7 (Redis) y resto RF: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -183,6 +184,15 @@ Permiso (matriz RF17): **`adm-clinica`** (toda la clínica) o **`profesional`** 
 - `DELETE /bloqueos/:id` → `204`.
 
 Colección: [`docs/http/agenda.http`](docs/http/agenda.http).
+
+### Pacientes e historial — RF14 / RF16
+
+- `GET /pacientes`, `GET /pacientes/:id` — lectura (`adm-clinica`, `recepcion`, `profesional`).
+- `POST /pacientes`, `PATCH /pacientes/:id` — escritura (`adm-clinica`, `recepcion`); body con `identificacion`, `nombre`, `fechaNacimiento` y `contactos` opcionales.
+- `POST /pacientes/:id/contactos`, `PATCH /contactos/:id` — contactos (`telefono` / `email` / `direccion`).
+- `GET /pacientes/:id/citas` — historial con `estado` (RF16). Paciente ajeno a la clínica → `404`.
+
+Colección: [`docs/http/pacientes.http`](docs/http/pacientes.http).
 
 ## División del trabajo
 
