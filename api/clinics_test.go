@@ -46,6 +46,11 @@ type fakeIdentityAdmin struct {
 	err     error
 	deleted []string
 	delErr  error
+
+	// Rol / estado aplicados a cada sub (para compensación en tests).
+	rolesSet  map[string]string
+	enabledSet map[string]bool
+	setErr    error
 }
 
 func (f *fakeIdentityAdmin) CreateUser(_ context.Context, u NewIDPUser) (string, error) {
@@ -62,6 +67,22 @@ func (f *fakeIdentityAdmin) CreateUser(_ context.Context, u NewIDPUser) (string,
 func (f *fakeIdentityAdmin) DeleteUser(_ context.Context, sub string) error {
 	f.deleted = append(f.deleted, sub)
 	return f.delErr
+}
+
+func (f *fakeIdentityAdmin) SetRealmRole(_ context.Context, sub, roleName string) error {
+	if f.rolesSet == nil {
+		f.rolesSet = map[string]string{}
+	}
+	f.rolesSet[sub] = roleName
+	return f.setErr
+}
+
+func (f *fakeIdentityAdmin) SetEnabled(_ context.Context, sub string, enabled bool) error {
+	if f.enabledSet == nil {
+		f.enabledSet = map[string]bool{}
+	}
+	f.enabledSet[sub] = enabled
+	return f.setErr
 }
 
 // setupClinicasTestEnv arma el router con stores falsos y token real.

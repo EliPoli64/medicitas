@@ -1,0 +1,157 @@
+### MediCitas — colección RF2–RF4 (usuarios, servicios, profesionales)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### Permiso: solo adm-clinica (matriz RF17). El tenant SIEMPRE es el del token (I5).
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token del administrador de clínica norte
+# @name tokenAdm
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-norte&password=cambiar_en_local&grant_type=password
+
+# --- RF2: usuarios ---
+
+### 2) Alta de usuario (crea identidad en Keycloak + fila Usuario)
+# @name altaUsuario
+POST {{host}}/usuarios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "username": "recep-norte-2",
+  "password": "secret123",
+  "rol": "recepcion",
+  "nombre": "Rosa",
+  "apellido": "Vargas"
+}
+
+@usuarioId = {{altaUsuario.response.body.usuario.id}}
+
+### 3) Listado de la clínica del token (ignora ?clinicaId= manipulado: I5)
+GET {{host}}/usuarios?clinicaId=clinica-sur
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 4) Asignación de rol
+PATCH {{host}}/usuarios/{{usuarioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"rol": "profesional"}
+
+### 5) Baja lógica (se refleja también en Keycloak)
+PATCH {{host}}/usuarios/{{usuarioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"activo": false}
+
+### 6) Rol no asignable desde clínica → 400
+POST {{host}}/usuarios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"username": "plat-x", "password": "secret123", "rol": "adm_plataforma"}
+
+# --- RF3: servicios ---
+
+### 7) Especialidades (catálogo global)
+# @name especialidades
+GET {{host}}/especialidades
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+@espId = {{especialidades.response.body.especialidades[0].id}}
+
+### 8) Alta de servicio
+# @name altaServicio
+POST {{host}}/servicios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "nombre": "Consulta de medicina general",
+  "duracionMinutos": 30,
+  "especialidadId": "{{espId}}"
+}
+
+@servicioId = {{altaServicio.response.body.servicio.id}}
+
+### 9) Catálogo de la clínica
+GET {{host}}/servicios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 10) Mantener el catálogo: cambiar duración
+PATCH {{host}}/servicios/{{servicioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"duracionMinutos": 45}
+
+### 11) Duración inválida → 400
+PATCH {{host}}/servicios/{{servicioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"duracionMinutos": 0}
+
+# --- RF4: profesionales ---
+
+### 12) Registrar profesional (usuario con rol profesional de la clínica)
+# Requiere un usuarioId existente con rol "profesional" (crearlo antes con RF2).
+# @name altaProfesional
+POST {{host}}/profesionales
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "usuarioId": "SUSTITUIR-usuarioId-con-rol-profesional",
+  "especialidadId": "{{espId}}"
+}
+
+@profesionalId = {{altaProfesional.response.body.profesional.id}}
+
+### 13) Servicios habilitados (reemplaza el conjunto)
+PUT {{host}}/profesionales/{{profesionalId}}/servicios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"servicioIds": ["{{servicioId}}"]}
+
+### 14) Profesionales con sus servicios
+GET {{host}}/profesionales
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 15) Baja lógica del profesional
+PATCH {{host}}/profesionales/{{profesionalId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"activo": false}
+
+### --- Casos negativos ---
+
+### 16) Recepción no gestiona el catálogo → 403
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+###
+POST {{host}}/usuarios
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{"username": "x", "password": "secret123", "rol": "recepcion"}
+
+### 17) Recurso de otra clínica → 404 (sin filtrar existencia)
+PATCH {{host}}/usuarios/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"activo": false}

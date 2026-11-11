@@ -142,6 +142,30 @@ func isUniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 }
 
+// isForeignKeyViolation / isNotNullViolation / isCheckViolation reconocen las
+// violaciones de integridad que la API traduce a 400/409 en vez de 500.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+func isNotNullViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23502"
+}
+
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
+// isRaiseException reconoce los RAISE EXCEPTION de los triggers de negocio
+// (p. ej. validarRolProfesional), que Postgres reporta con SQLSTATE P0001.
+func isRaiseException(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "P0001"
+}
+
 var (
 	// Misma regla que el CHECK "ClinicaIdentificadorFormato".
 	identificadorRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)

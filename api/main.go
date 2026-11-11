@@ -74,6 +74,23 @@ func setupRouter() *gin.Engine {
 	// RF1: alta de clínica + primer administrador (matriz: solo adm-plataforma).
 	r.POST("/clinicas", append(secure(OpAltaClinica), createClinica)...)
 
+	// RF2: gestión de usuarios de la clínica (matriz: adm-clinica).
+	r.GET("/usuarios", append(secure(OpGestionCatalogo), listUsuarios)...)
+	r.POST("/usuarios", append(secure(OpGestionCatalogo), createUsuario)...)
+	r.PATCH("/usuarios/:id", append(secure(OpGestionCatalogo), updateUsuario)...)
+
+	// RF3: catálogo de servicios y especialidades (matriz: adm-clinica).
+	r.GET("/especialidades", append(secure(OpGestionCatalogo), listEspecialidades)...)
+	r.GET("/servicios", append(secure(OpGestionCatalogo), listServicios)...)
+	r.POST("/servicios", append(secure(OpGestionCatalogo), createServicio)...)
+	r.PATCH("/servicios/:id", append(secure(OpGestionCatalogo), updateServicio)...)
+
+	// RF4: profesionales y servicios habilitados (matriz: adm-clinica).
+	r.GET("/profesionales", append(secure(OpGestionCatalogo), listProfesionales)...)
+	r.POST("/profesionales", append(secure(OpGestionCatalogo), createProfesional)...)
+	r.PATCH("/profesionales/:id", append(secure(OpGestionCatalogo), updateProfesional)...)
+	r.PUT("/profesionales/:id/servicios", append(secure(OpGestionCatalogo), setProfesionalServicios)...)
+
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {
 		id, ok := identityFromContext(c)
@@ -114,6 +131,9 @@ func main() {
 	userStore = newPGUserStore(db)
 	patientStore = newPGPatientStore(db)
 	clinicStore = newPGClinicStore(db)
+	userAdminStore = newPGUserAdminStore(db)
+	serviceStore = newPGServiceStore(db)
+	professionalStore = newPGProfessionalStore(db)
 	identityAdmin = newHTTPIdentityAdminFromEnv()
 	if err := setupRouter().Run(":" + port); err != nil {
 		panic(err)

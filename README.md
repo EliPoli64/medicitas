@@ -28,7 +28,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
 - **Identidad (Matías) — cerrada:** Keycloak realm + JWT/JWKS + matriz RF17 + `sub`→`"Usuario"` + alineación claim/BD + `GET /pacientes` (I5). Rutas: `/health`, `/ready`, `/me`, `/permisos`, `/pacientes`. Colección [`docs/http/identidad.http`](docs/http/identidad.http); smoke [`scripts/smoke-identidad.ps1`](scripts/smoke-identidad.ps1); integración `go test -tags=integration`. Checklist en [`docs/keycloak.md`](docs/keycloak.md). Resto del CRUD de dominio: pendiente.
-- **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`). RF2–RF4: pendiente.
+- **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`).
+- **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`. RF5–RF21: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -140,6 +141,36 @@ Salida `201`:
 Notas de diseño (defensa): la identidad se crea **antes** que la fila porque `"Usuario"."idpSub"` es `NOT NULL UNIQUE`; si la transacción falla se elimina la identidad (saga con compensación, sin XA). Una caída entre ambos pasos deja una identidad huérfana en Keycloak que no alcanza dato alguno (sin fila `"Usuario"` no hay tenant: I5 se sostiene), y queda en logs.
 
 Colección de peticiones: [`docs/http/clinicas.http`](docs/http/clinicas.http).
+
+### `GET|POST /usuarios`, `PATCH /usuarios/:id` — RF2: gestión de usuarios
+
+Permiso (matriz RF17): **solo `adm-clinica`**. Un usuario pertenece a exactamente una clínica: la del token. `adm_plataforma` no se crea por esta vía.
+
+- `POST /usuarios` — alta. Body: `username`, `password` (≥8), `rol` (`adm_clinica`|`recepcion`|`profesional`), opcional `email`, `nombre`, `apellido`. Crea la identidad en Keycloak (rol de realm + `clinica_id`) y la fila `"Usuario"`; si la BD falla se compensa eliminando la identidad. → `201` / `400` / `409` (username duplicado) / `502` (IdP) / `500`.
+- `GET /usuarios` — lista los usuarios de la clínica del token (ignora `?clinicaId=` manipulado: I5).
+- `PATCH /usuarios/:id` — asignación de rol (`rol`) y/o baja lógica (`activo`). El cambio se aplica primero en Keycloak y luego en la BD, revirtiendo el paso de Keycloak si la BD falla. Un id de otra clínica responde `404`. Cambiar el rol de un profesional activo responde `409`. → `200` / `400` / `404` / `409` / `502` / `500`.
+
+Nota de modelo: el dominio no guarda username ni credenciales (spec §2); las salidas exponen `idpSub`, no el login.
+
+### `GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id` — RF3: catálogo
+
+Permiso (matriz RF17): **solo `adm-clinica`**. El servicio lleva `nombre`, `duracionMinutos` (1–1440, define el espacio en la agenda: I4) y la `especialidadId` que requiere.
+
+- `POST /servicios` → `201` / `400` (campos o especialidad inválida) / `409` (nombre duplicado en la clínica).
+- `GET /servicios` — catálogo de la clínica del token.
+- `PATCH /servicios/:id` — `nombre`, `duracionMinutos` y/o `activo` (baja lógica). `404` si no pertenece a la clínica.
+- `GET /especialidades` — catálogo global de especialidades.
+
+### `GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` — RF4
+
+Permiso (matriz RF17): **solo `adm-clinica`**. Un profesional es un usuario con rol `profesional` de la clínica; atiende solo los servicios asociados, y cada servicio debe corresponder a su especialidad.
+
+- `POST /profesionales` — body: `usuarioId`, `especialidadId`. → `201` / `400` (usuario sin rol profesional activo, o especialidad inválida) / `409` (ya registrado).
+- `PUT /profesionales/:id/servicios` — body: `servicioIds` (reemplaza el conjunto, en una transacción). → `200` / `400` (servicio inexistente o de otra especialidad) / `404`.
+- `PATCH /profesionales/:id` — `activo` (baja lógica) → `200` / `404`.
+- `GET /profesionales` — lista con sus servicios habilitados.
+
+Colección de peticiones: [`docs/http/catalogo.http`](docs/http/catalogo.http).
 
 ## División del trabajo
 

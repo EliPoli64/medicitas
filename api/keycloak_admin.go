@@ -49,6 +49,19 @@ type IdentityAdmin interface {
 	CreateUser(ctx context.Context, u NewIDPUser) (string, error)
 	// DeleteUser elimina la identidad (compensación cuando falla la BD).
 	DeleteUser(ctx context.Context, sub string) error
+	// SetRealmRole fija el rol de realm (asignación de rol, RF2).
+	SetRealmRole(ctx context.Context, sub, roleName string) error
+	// SetEnabled activa o desactiva la identidad (baja lógica, RF2).
+	SetEnabled(ctx context.Context, sub string, enabled bool) error
+}
+
+// domainRealmRoles son los roles del dominio en el realm. SetRealmRole solo
+// toca estos; roles ajenos del usuario (default-roles, etc.) se conservan.
+var domainRealmRoles = map[string]bool{
+	"adm-plataforma": true,
+	"adm-clinica":    true,
+	"recepcion":      true,
+	"profesional":    true,
 }
 
 var (
@@ -246,6 +259,55 @@ func (a *httpIdentityAdmin) assignRealmRole(ctx context.Context, sub, roleName s
 		[]any{role}, http.StatusNoContent)
 	if err != nil {
 		return fmt.Errorf("asignar rol %q: %w", roleName, err)
+	}
+	return nil
+}
+
+// SetRealmRole fija el rol de realm del usuario: elimina los roles del dominio
+// que tenga y asigna el indicado (idempotente). No toca roles fuera del dominio.
+func (a *httpIdentityAdmin) SetRealmRole(ctx context.Context, sub, roleName string) error {
+	_, body, err := a.adminRequest(ctx, http.MethodGet,
+		"/users/"+url.PathEscape(sub)+"/role-mappings/realm", nil, http.StatusOK)
+	if err != nil {
+		return fmt.Errorf("leer roles del usuario %s: %w", sub, err)
+	}
+	var current []map[string]any
+	if err := json.Unmarshal(body, &current); err != nil {
+		return err
+	}
+	var toRemove []map[string]any
+	for _, role := range current {
+		if name, _ := role["name"].(string); domainRealmRoles[name] && name != roleName {
+			toRemove = append(toRemove, role)
+		}
+	}
+	if len(toRemove) > 0 {
+		if _, _, err := a.adminRequest(ctx, http.MethodDelete,
+			"/users/"+url.PathEscape(sub)+"/role-mappings/realm",
+			toRemove, http.StatusNoContent); err != nil {
+			return fmt.Errorf("quitar roles del usuario %s: %w", sub, err)
+		}
+	}
+	return a.assignRealmRole(ctx, sub, roleName)
+}
+
+// SetEnabled activa o desactiva la identidad (baja lógica en Keycloak).
+// La BD sigue siendo la fuente de verdad del campo "activo" del dominio;
+// aquí se refleja para que la identidad no autentique si no debe.
+func (a *httpIdentityAdmin) SetEnabled(ctx context.Context, sub string, enabled bool) error {
+	_, body, err := a.adminRequest(ctx, http.MethodGet,
+		"/users/"+url.PathEscape(sub), nil, http.StatusOK)
+	if err != nil {
+		return fmt.Errorf("leer usuario %s: %w", sub, err)
+	}
+	var user map[string]any
+	if err := json.Unmarshal(body, &user); err != nil {
+		return err
+	}
+	user["enabled"] = enabled
+	if _, _, err := a.adminRequest(ctx, http.MethodPut,
+		"/users/"+url.PathEscape(sub), user, http.StatusNoContent); err != nil {
+		return fmt.Errorf("actualizar usuario %s: %w", sub, err)
 	}
 	return nil
 }
