@@ -91,6 +91,16 @@ func setupRouter() *gin.Engine {
 	r.PATCH("/profesionales/:id", append(secure(OpGestionCatalogo), updateProfesional)...)
 	r.PUT("/profesionales/:id/servicios", append(secure(OpGestionCatalogo), setProfesionalServicios)...)
 
+	// RF5: horarios semanales (adm-clinica o profesional propio).
+	r.GET("/profesionales/:id/horarios", append(secure(OpHorariosBloqueos), listHorarios)...)
+	r.POST("/profesionales/:id/horarios", append(secure(OpHorariosBloqueos), createHorario)...)
+	r.PATCH("/horarios/:id", append(secure(OpHorariosBloqueos), updateHorario)...)
+
+	// RF6: bloqueos + conflictos de citas reservadas.
+	r.GET("/profesionales/:id/bloqueos", append(secure(OpHorariosBloqueos), listBloqueos)...)
+	r.POST("/profesionales/:id/bloqueos", append(secure(OpHorariosBloqueos), createBloqueo)...)
+	r.DELETE("/bloqueos/:id", append(secure(OpHorariosBloqueos), deleteBloqueo)...)
+
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {
 		id, ok := identityFromContext(c)
@@ -134,6 +144,8 @@ func main() {
 	userAdminStore = newPGUserAdminStore(db)
 	serviceStore = newPGServiceStore(db)
 	professionalStore = newPGProfessionalStore(db)
+	scheduleStore = newPGScheduleStore(db)
+	blockStore = newPGBlockStore(db)
 	identityAdmin = newHTTPIdentityAdminFromEnv()
 	if err := setupRouter().Run(":" + port); err != nil {
 		panic(err)

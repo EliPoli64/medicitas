@@ -1,0 +1,75 @@
+### MediCitas — RF5 horarios + RF6 bloqueos
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### Permiso: adm-clinica o profesional (solo propios)
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### Token adm clínica norte
+# @name tokenAdm
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-norte&password={{$dotenv SEED_USER_PASSWORD}}&grant_type=password
+
+### Listar profesionales (para copiar un id)
+GET {{host}}/profesionales
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+@profesionalId = {{$guid}}
+# Sustituir @profesionalId por un id real de GET /profesionales
+
+### RF5 — listar horarios (I5: clinicaId en query se ignora)
+GET {{host}}/profesionales/{{profesionalId}}/horarios?clinicaId=clinica-sur
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### RF5 — crear bloque (lunes 09:00–12:00)
+POST {{host}}/profesionales/{{profesionalId}}/horarios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "diaSemana": 1,
+  "horaInicio": "09:00",
+  "horaFin": "12:00",
+  "vigenteDesde": "2026-01-01",
+  "vigenteHasta": null
+}
+
+### RF5 — desactivar horario
+# @name horarioCreado
+PATCH {{host}}/horarios/{{horarioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "activo": false
+}
+
+### RF6 — listar bloqueos
+GET {{host}}/profesionales/{{profesionalId}}/bloqueos
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### RF6 — crear bloqueo (responde conflictos de citas reservadas; no las cancela)
+POST {{host}}/profesionales/{{profesionalId}}/bloqueos
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "inicio": "2026-11-20T09:00:00-06:00",
+  "fin": "2026-11-20T17:00:00-06:00",
+  "motivo": "Vacaciones"
+}
+
+### RF6 — eliminar bloqueo
+DELETE {{host}}/bloqueos/{{bloqueoId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### Token profesional (solo agenda propia)
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password={{$dotenv SEED_USER_PASSWORD}}&grant_type=password

@@ -159,6 +159,12 @@ func isCheckViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }
 
+// isExclusionViolation reconoce EXCLUDE (p. ej. HorarioAtencionSinSolape) → SQLSTATE 23P01.
+func isExclusionViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23P01"
+}
+
 // isRaiseException reconoce los RAISE EXCEPTION de los triggers de negocio
 // (p. ej. validarRolProfesional), que Postgres reporta con SQLSTATE P0001.
 func isRaiseException(err error) bool {

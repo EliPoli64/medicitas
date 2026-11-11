@@ -29,7 +29,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
 - **Identidad (Matías) — cerrada:** Keycloak realm + JWT/JWKS + matriz RF17 + `sub`→`"Usuario"` + alineación claim/BD + `GET /pacientes` (I5). Rutas: `/health`, `/ready`, `/me`, `/permisos`, `/pacientes`. Colección [`docs/http/identidad.http`](docs/http/identidad.http); smoke [`scripts/smoke-identidad.ps1`](scripts/smoke-identidad.ps1); integración `go test -tags=integration`. Checklist en [`docs/keycloak.md`](docs/keycloak.md). Resto del CRUD de dominio: pendiente.
 - **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`).
-- **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`. RF5–RF21: pendiente.
+- **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`.
+- **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http). RF7–RF21: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -171,6 +172,17 @@ Permiso (matriz RF17): **solo `adm-clinica`**. Un profesional es un usuario con 
 - `GET /profesionales` — lista con sus servicios habilitados.
 
 Colección de peticiones: [`docs/http/catalogo.http`](docs/http/catalogo.http).
+
+### Horarios y bloqueos — RF5 / RF6
+
+Permiso (matriz RF17): **`adm-clinica`** (toda la clínica) o **`profesional`** (solo su propio `"Profesional"`). Tenant desde BD (I5); `?clinicaId=` se ignora.
+
+- `GET|POST /profesionales/:id/horarios` — bloques semanales (`diaSemana` 1=lunes…7=domingo). Solape con otro activo → `409`.
+- `PATCH /horarios/:id` — actualizar rango/vigencia o `activo` (baja lógica).
+- `GET|POST /profesionales/:id/bloqueos` — POST body: `inicio`, `fin`, `motivo`. Responde `bloqueo` + `conflictos` (citas `reservada` solapadas; **no** las cancela).
+- `DELETE /bloqueos/:id` → `204`.
+
+Colección: [`docs/http/agenda.http`](docs/http/agenda.http).
 
 ## División del trabajo
 
