@@ -97,6 +97,10 @@ func setupRouter() *gin.Engine {
 	r.PATCH("/profesionales/:id", append(secure(OpGestionCatalogo), updateProfesional)...)
 	r.PUT("/profesionales/:id/servicios", append(secure(OpGestionCatalogo), setProfesionalServicios)...)
 
+	// RF7/RF8: disponibilidad (matriz: adm-clinica, recepcion, profesional).
+	r.GET("/profesionales/:id/disponibilidad", append(secure(OpConsultarDisponibilidad), listDisponibilidadProfesional)...)
+	r.GET("/servicios/:id/disponibilidad", append(secure(OpConsultarDisponibilidad), listDisponibilidadServicio)...)
+
 	// RF5: horarios semanales (adm-clinica o profesional propio).
 	r.GET("/profesionales/:id/horarios", append(secure(OpHorariosBloqueos), listHorarios)...)
 	r.POST("/profesionales/:id/horarios", append(secure(OpHorariosBloqueos), createHorario)...)
@@ -150,6 +154,7 @@ func main() {
 	userAdminStore = newPGUserAdminStore(db)
 	serviceStore = newPGServiceStore(db)
 	professionalStore = newPGProfessionalStore(db)
+	disponibilidadStore = newPGDisponibilidadStore(db)
 	scheduleStore = newPGScheduleStore(db)
 	blockStore = newPGBlockStore(db)
 	identityAdmin = newHTTPIdentityAdminFromEnv()
