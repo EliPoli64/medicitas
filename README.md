@@ -31,7 +31,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **RF1 (alta de clínicas) — implementado:** `POST /clinicas` crea la clínica y su primer administrador (`adm_clinica`) en una sola transacción, provisionando la identidad en Keycloak vía **Admin API** (mismo mecanismo que el seed) con rol de realm y atributo `clinica_id`. Si la BD falla, se compensa eliminando la identidad. Colección [`docs/http/clinicas.http`](docs/http/clinicas.http); prueba de integración `TestIntegrationRF1AltaClinica` (`go test -tags=integration ./...`).
 - **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`.
 - **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http).
-- **RF14 + RF16 (pacientes) — implementado:** listado/detalle/alta/actualización de pacientes y contactos (`OpPacientesLectura` / `OpPacientesEscritura`) e historial de citas `GET /pacientes/:id/citas` (`OpHistorialPaciente`). Colección [`docs/http/pacientes.http`](docs/http/pacientes.http). RF7 (Redis) y resto RF: pendiente.
+- **RF14 + RF16 (pacientes) — implementado:** listado/detalle/alta/actualización de pacientes y contactos (`OpPacientesLectura` / `OpPacientesEscritura`) e historial de citas `GET /pacientes/:id/citas` (`OpHistorialPaciente`). Colección [`docs/http/pacientes.http`](docs/http/pacientes.http).
+- **RF7–RF8 (disponibilidad) — implementado:** `GET /profesionales/:id/disponibilidad` (espacios del día: horario − bloqueos − citas vigentes, rejilla configurable, espejo de los triggers del motor) y `GET /servicios/:id/disponibilidad` (por servicio en un rango, con profesionales y sus espacios) bajo `OpConsultarDisponibilidad`. Índices justificados con `EXPLAIN ANALYZE` sobre dataset sintético ([`docs/bench/disponibilidad_bench.sql`](docs/bench/disponibilidad_bench.sql)) en [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http); prueba de integración `TestIntegrationRF7RF8Disponibilidad`. RF9–RF13, RF15, RF18–RF21 y cableado de la caché Redis: pendiente.
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
 ## Estructura del repositorio
@@ -184,6 +185,15 @@ Permiso (matriz RF17): **`adm-clinica`** (toda la clínica) o **`profesional`** 
 - `DELETE /bloqueos/:id` → `204`.
 
 Colección: [`docs/http/agenda.http`](docs/http/agenda.http).
+
+### Disponibilidad — RF7 / RF8
+
+Permiso (matriz RF17): **`adm-clinica`, `recepcion`, `profesional`** (`OpConsultarDisponibilidad`). Tenant desde BD (I5); `?clinicaId=` se ignora. La duración de la cita la fija el servicio (I4).
+
+- `GET /profesionales/:id/disponibilidad` — RF7. Query: `fecha=YYYY-MM-DD`, `servicioId`, `pasoMinutos` opcional (5–120, por defecto 30). Devuelve los `espacios` del día: intervalos futuros alineados a la rejilla que caben enteros en un bloque de horario vigente y no solapan bloqueos ni citas `reservada`. → `200` / `400` (parámetros, servicio o profesional inactivo, profesional sin el servicio) / `404` (no es de la clínica).
+- `GET /servicios/:id/disponibilidad` — RF8. Query: `desde`, `hasta` (máx. 62 días), `pasoMinutos` opcional. Devuelve por fecha los profesionales habilitados con espacio y cuáles son esos espacios (solo fechas con disponibilidad).
+
+Modelo de cálculo, contrato completo e **justificación de índices con planes de ejecución**: [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección: [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http).
 
 ### Pacientes e historial — RF14 / RF16
 

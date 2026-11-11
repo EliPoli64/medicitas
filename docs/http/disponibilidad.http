@@ -1,0 +1,85 @@
+### MediCitas — colección RF7/RF8 (disponibilidad)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### Permiso (matriz RF17): adm-clinica, recepcion y profesional (OpConsultarDisponibilidad).
+### El tenant SIEMPRE es el del token (I5). La duración la fija el servicio (I4).
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token del administrador de clínica norte
+# @name tokenAdm
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-norte&password=cambiar_en_local&grant_type=password
+
+### 2) Catálogo para armar la consulta
+# @name profesionales
+GET {{host}}/profesionales
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+# @name servicios
+GET {{host}}/servicios
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+@profesionalId = {{profesionales.response.body.profesionales[0].id}}
+@servicioId = {{servicios.response.body.servicios[0].id}}
+
+# --- RF7: espacios de un profesional en una fecha ---
+
+### 3) Espacios disponibles (horario − bloqueos − citas vigentes)
+# La fecha es local a la clínica. pasoMinutos alinea los inicios (30 por defecto).
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 4) Rejilla más fina (cada 15 min)
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}&pasoMinutos=15
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 5) Fecha inválida → 400
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=16-11-2026&servicioId={{servicioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 6) Profesional de otra clínica → 404 (I5: sin filtrar existencia)
+GET {{host}}/profesionales/00000000-0000-0000-0000-000000000000/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+# --- RF8: disponibilidad por servicio en un rango ---
+
+### 7) Profesionales con espacio y cuáles son (solo fechas con disponibilidad)
+GET {{host}}/servicios/{{servicioId}}/disponibilidad?desde=2026-11-16&hasta=2026-11-22
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 8) Rango inválido (desde > hasta) → 400
+GET {{host}}/servicios/{{servicioId}}/disponibilidad?desde=2026-11-22&hasta=2026-11-16
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### --- Matriz y aislamiento ---
+
+### 9) Recepción también consulta (matriz RF7/RF8)
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+###
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### 10) adm-plataforma NO consulta disponibilidad → 403
+# @name tokenPlat
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=plat-admin&password=plat123&grant_type=password
+
+###
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
+Authorization: Bearer {{tokenPlat.response.body.access_token}}
+
+### 11) Sin token → 401
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
