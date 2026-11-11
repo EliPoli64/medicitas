@@ -112,7 +112,8 @@ func scanSchedule(scanner interface {
 }) (Schedule, error) {
 	var h Schedule
 	var hasta sql.NullString
-	var inicio, fin time.Time
+	// pgx entrega las columnas time como texto ("08:00:00").
+	var inicio, fin string
 	err := scanner.Scan(
 		&h.ID, &h.ProfesionalID, &h.DiaSemana,
 		&inicio, &fin, &h.VigenteDesde, &hasta, &h.Activo,
@@ -120,8 +121,8 @@ func scanSchedule(scanner interface {
 	if err != nil {
 		return Schedule{}, err
 	}
-	h.HoraInicio = inicio.Format("15:04:05")
-	h.HoraFin = fin.Format("15:04:05")
+	h.HoraInicio = normalizeHora(inicio)
+	h.HoraFin = normalizeHora(fin)
 	if hasta.Valid {
 		s := hasta.String
 		h.VigenteHasta = &s
