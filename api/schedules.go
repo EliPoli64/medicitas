@@ -20,25 +20,25 @@ import (
 )
 
 var (
-	errHorarioSolapado         = errors.New("el bloque de horario se solapa con otro vigente del profesional")
-	errHorarioFueraDeClinica   = errors.New("horario no encontrado en la clínica")
-	errProfesionalAgendaFuera  = errors.New("profesional no encontrado en la clínica")
-	errAgendaSinPermisoPropio  = errors.New("solo puede gestionar la agenda propia")
-	errHorarioDatosInvalidos   = errors.New("datos de horario inválidos")
-	horaRe                     = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$`)
-	fechaRe                    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	errHorarioSolapado        = errors.New("el bloque de horario se solapa con otro vigente del profesional")
+	errHorarioFueraDeClinica  = errors.New("horario no encontrado en la clínica")
+	errProfesionalAgendaFuera = errors.New("profesional no encontrado en la clínica")
+	errAgendaSinPermisoPropio = errors.New("solo puede gestionar la agenda propia")
+	errHorarioDatosInvalidos  = errors.New("datos de horario inválidos")
+	horaRe                    = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$`)
+	fechaRe                   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
 // Schedule es la proyección de "HorarioAtencion".
 type Schedule struct {
-	ID             string  `json:"id"`
-	ProfesionalID  string  `json:"profesionalId"`
-	DiaSemana      int     `json:"diaSemana"` // 1=lunes … 7=domingo
-	HoraInicio     string  `json:"horaInicio"`
-	HoraFin        string  `json:"horaFin"`
-	VigenteDesde   string  `json:"vigenteDesde"`
-	VigenteHasta   *string `json:"vigenteHasta"`
-	Activo         bool    `json:"activo"`
+	ID            string  `json:"id"`
+	ProfesionalID string  `json:"profesionalId"`
+	DiaSemana     int     `json:"diaSemana"` // 1=lunes … 7=domingo
+	HoraInicio    string  `json:"horaInicio"`
+	HoraFin       string  `json:"horaFin"`
+	VigenteDesde  string  `json:"vigenteDesde"`
+	VigenteHasta  *string `json:"vigenteHasta"`
+	Activo        bool    `json:"activo"`
 }
 
 // SchedulePatch son campos opcionales de PATCH /horarios/:id.

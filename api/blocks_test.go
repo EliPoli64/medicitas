@@ -152,7 +152,7 @@ func TestDeleteBloqueoOK(t *testing.T) {
 	defer srv.Close()
 	sched := &fakeScheduleStore{owners: map[string]string{"p1": "u-prof"}, byProf: map[string][]Schedule{}, horarioOwner: map[string]string{}}
 	blocks := &fakeBlockStore{
-		byProf: map[string][]Block{"p1": {{ID: "b1", ProfesionalID: "p1", Motivo: "x"}}},
+		byProf:       map[string][]Block{"p1": {{ID: "b1", ProfesionalID: "p1", Motivo: "x"}}},
 		bloqueoOwner: map[string]string{"b1": "p1"},
 	}
 	r := setupAgendaTestEnv(t, srv.URL, sched, blocks, admAgendaUser())

@@ -20,13 +20,13 @@ import (
 )
 
 var (
-	errPacienteFueraDeClinica   = errors.New("paciente no encontrado en la clínica")
-	errPacienteDuplicado        = errors.New("ya existe un paciente con esa identificación en la clínica")
-	errPacienteDatosInvalidos   = errors.New("datos de paciente inválidos")
-	errContactoFueraDeClinica   = errors.New("contacto no encontrado en la clínica")
-	errContactoTipoInvalido     = errors.New("tipo de contacto inválido")
-	errContactoDatosInvalidos   = errors.New("datos de contacto inválidos")
-	errContactoPrincipalDup     = errors.New("ya hay un contacto principal activo de ese tipo")
+	errPacienteFueraDeClinica = errors.New("paciente no encontrado en la clínica")
+	errPacienteDuplicado      = errors.New("ya existe un paciente con esa identificación en la clínica")
+	errPacienteDatosInvalidos = errors.New("datos de paciente inválidos")
+	errContactoFueraDeClinica = errors.New("contacto no encontrado en la clínica")
+	errContactoTipoInvalido   = errors.New("tipo de contacto inválido")
+	errContactoDatosInvalidos = errors.New("datos de contacto inválidos")
+	errContactoPrincipalDup   = errors.New("ya hay un contacto principal activo de ese tipo")
 )
 
 // Patient es la proyección de "Paciente".
@@ -41,13 +41,13 @@ type Patient struct {
 
 // PatientContact es la proyección de "ContactoPaciente".
 type PatientContact struct {
-	ID         string `json:"id"`
-	PacienteID string `json:"pacienteId"`
-	TipoCodigo string `json:"tipoCodigo"`
-	TipoNombre string `json:"tipoNombre"`
-	Valor      string `json:"valor"`
-	EsPrincipal bool  `json:"esPrincipal"`
-	Activo     bool   `json:"activo"`
+	ID          string `json:"id"`
+	PacienteID  string `json:"pacienteId"`
+	TipoCodigo  string `json:"tipoCodigo"`
+	TipoNombre  string `json:"tipoNombre"`
+	Valor       string `json:"valor"`
+	EsPrincipal bool   `json:"esPrincipal"`
+	Activo      bool   `json:"activo"`
 }
 
 // PatientAppointment es una cita del historial (RF16).
@@ -69,13 +69,16 @@ type ContactInput struct {
 }
 
 // PatientStore abstrae pacientes/contactos/historial.
+//
+// Las escrituras que tocan datos de contacto reciben el AuditActor y registran
+// su evento de RF18 en la MISMA transacción que el hecho.
 type PatientStore interface {
 	ListActiveByClinicaIdentificador(ctx context.Context, clinicaIdentificador string) ([]Patient, error)
 	GetPaciente(ctx context.Context, clinicaIdent, id string) (Patient, error)
-	CreatePaciente(ctx context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput) (Patient, error)
+	CreatePaciente(ctx context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput, actor AuditActor) (Patient, error)
 	UpdatePaciente(ctx context.Context, clinicaIdent, id string, patch PatientPatch) (Patient, error)
-	CreateContacto(ctx context.Context, clinicaIdent, pacienteID string, in ContactInput) (PatientContact, error)
-	UpdateContacto(ctx context.Context, clinicaIdent, contactoID string, patch ContactPatch) (PatientContact, error)
+	CreateContacto(ctx context.Context, clinicaIdent, pacienteID string, in ContactInput, actor AuditActor) (PatientContact, error)
+	UpdateContacto(ctx context.Context, clinicaIdent, contactoID string, patch ContactPatch, actor AuditActor) (PatientContact, error)
 	ListCitasByPaciente(ctx context.Context, clinicaIdent, pacienteID string) ([]PatientAppointment, error)
 }
 
@@ -242,7 +245,7 @@ RETURNING "id"::text, "pacienteId"::text, $6, (SELECT "nombre" FROM "TipoContact
 	return ct, nil
 }
 
-func (s *pgPatientStore) CreatePaciente(ctx context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput) (Patient, error) {
+func (s *pgPatientStore) CreatePaciente(ctx context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput, actor AuditActor) (Patient, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Patient{}, fmt.Errorf("abrir transacción: %w", err)
@@ -270,6 +273,14 @@ RETURNING "id"::text, "identificacion", "nombre", "fechaNacimiento"::text, "acti
 	for _, in := range contactos {
 		ct, err := s.insertContactoTx(ctx, tx, clinicaIdent, p.ID, in)
 		if err != nil {
+			return Patient{}, err
+		}
+		// RF18: escritura de datos de contacto con su rastro en la misma transacción.
+		if err := insertAuditoria(ctx, tx, clinicaIdent, actor, AuditEvento{
+			Accion: accionEscritura, Entidad: entidadContactoPaciente,
+			EntidadID: ct.ID, PacienteID: p.ID,
+			Metadata: map[string]any{"tipoCodigo": ct.TipoCodigo, "origen": "alta_paciente"},
+		}); err != nil {
 			return Patient{}, err
 		}
 		p.Contactos = append(p.Contactos, ct)
@@ -331,7 +342,7 @@ RETURNING p."id"::text, p."identificacion", p."nombre", p."fechaNacimiento"::tex
 	return p, nil
 }
 
-func (s *pgPatientStore) CreateContacto(ctx context.Context, clinicaIdent, pacienteID string, in ContactInput) (PatientContact, error) {
+func (s *pgPatientStore) CreateContacto(ctx context.Context, clinicaIdent, pacienteID string, in ContactInput, actor AuditActor) (PatientContact, error) {
 	if _, err := s.GetPaciente(ctx, clinicaIdent, pacienteID); err != nil {
 		return PatientContact{}, err
 	}
@@ -344,13 +355,21 @@ func (s *pgPatientStore) CreateContacto(ctx context.Context, clinicaIdent, pacie
 	if err != nil {
 		return PatientContact{}, err
 	}
+	// RF18: escritura de datos de contacto con su rastro en la misma transacción.
+	if err := insertAuditoria(ctx, tx, clinicaIdent, actor, AuditEvento{
+		Accion: accionEscritura, Entidad: entidadContactoPaciente,
+		EntidadID: ct.ID, PacienteID: ct.PacienteID,
+		Metadata: map[string]any{"tipoCodigo": ct.TipoCodigo},
+	}); err != nil {
+		return PatientContact{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PatientContact{}, fmt.Errorf("commit contacto: %w", err)
 	}
 	return ct, nil
 }
 
-func (s *pgPatientStore) UpdateContacto(ctx context.Context, clinicaIdent, contactoID string, patch ContactPatch) (PatientContact, error) {
+func (s *pgPatientStore) UpdateContacto(ctx context.Context, clinicaIdent, contactoID string, patch ContactPatch, actor AuditActor) (PatientContact, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PatientContact{}, fmt.Errorf("abrir transacción: %w", err)
@@ -423,6 +442,14 @@ RETURNING cp."id"::text, cp."pacienteId"::text,
 	}
 	if err != nil {
 		return PatientContact{}, fmt.Errorf("actualizar contacto: %w", err)
+	}
+	// RF18: escritura de datos de contacto con su rastro en la misma transacción.
+	if err := insertAuditoria(ctx, tx, clinicaIdent, actor, AuditEvento{
+		Accion: accionEscritura, Entidad: entidadContactoPaciente,
+		EntidadID: out.ID, PacienteID: out.PacienteID,
+		Metadata: map[string]any{"tipoCodigo": out.TipoCodigo},
+	}); err != nil {
+		return PatientContact{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return PatientContact{}, fmt.Errorf("commit contacto: %w", err)
@@ -538,7 +565,8 @@ func createPaciente(c *gin.Context) {
 		return
 	}
 	p, err := patientStore.CreatePaciente(c.Request.Context(), clinica,
-		strings.TrimSpace(req.Identificacion), strings.TrimSpace(req.Nombre), req.FechaNacimiento, req.Contactos)
+		strings.TrimSpace(req.Identificacion), strings.TrimSpace(req.Nombre), req.FechaNacimiento, req.Contactos,
+		auditActorFromContext(c))
 	switch {
 	case errors.Is(err, errPacienteDuplicado):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
@@ -562,11 +590,28 @@ func getPaciente(c *gin.Context) {
 	switch {
 	case errors.Is(err, errPacienteFueraDeClinica):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo obtener el paciente"})
-	default:
-		c.JSON(http.StatusOK, gin.H{"clinicaIdentificador": clinica, "paciente": p})
+		return
 	}
+
+	// RF18: la respuesta incluye datos de contacto; la lectura se registra
+	// antes de responder y sin rastro no se sirve el dato.
+	if auditStore == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bitácora no disponible"})
+		return
+	}
+	if err := auditStore.Registrar(c.Request.Context(), clinica, auditActorFromContext(c), AuditEvento{
+		Accion:     accionLectura,
+		Entidad:    entidadContactoPaciente,
+		PacienteID: p.ID,
+		Metadata:   map[string]any{"contactos": len(p.Contactos)},
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo registrar el acceso en la bitácora"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"clinicaIdentificador": clinica, "paciente": p})
 }
 
 func updatePaciente(c *gin.Context) {
@@ -627,15 +672,34 @@ func updatePaciente(c *gin.Context) {
 	switch {
 	case errors.Is(err, errPacienteFueraDeClinica):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
 	case errors.Is(err, errPacienteDuplicado):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
 	case errors.Is(err, errPacienteDatosInvalidos):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar el paciente"})
-	default:
-		c.JSON(http.StatusOK, gin.H{"clinicaIdentificador": clinica, "paciente": p})
+		return
 	}
+
+	// RF18: la respuesta incluye datos de contacto (aunque el PATCH no los
+	// toque); la lectura se registra antes de responder.
+	if auditStore == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bitácora no disponible"})
+		return
+	}
+	if err := auditStore.Registrar(c.Request.Context(), clinica, auditActorFromContext(c), AuditEvento{
+		Accion:     accionLectura,
+		Entidad:    entidadContactoPaciente,
+		PacienteID: p.ID,
+		Metadata:   map[string]any{"contactos": len(p.Contactos), "origen": "actualizacion_paciente"},
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo registrar el acceso en la bitácora"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"clinicaIdentificador": clinica, "paciente": p})
 }
 
 func createContacto(c *gin.Context) {
@@ -660,7 +724,7 @@ func createContacto(c *gin.Context) {
 		return
 	}
 	in.Valor = strings.TrimSpace(in.Valor)
-	ct, err := patientStore.CreateContacto(c.Request.Context(), clinica, c.Param("id"), in)
+	ct, err := patientStore.CreateContacto(c.Request.Context(), clinica, c.Param("id"), in, auditActorFromContext(c))
 	switch {
 	case errors.Is(err, errPacienteFueraDeClinica):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -720,7 +784,7 @@ func updateContacto(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "solicitud inválida", "detalles": []string{"debe indicar al menos un campo"}})
 		return
 	}
-	ct, err := patientStore.UpdateContacto(c.Request.Context(), clinica, c.Param("id"), patch)
+	ct, err := patientStore.UpdateContacto(c.Request.Context(), clinica, c.Param("id"), patch, auditActorFromContext(c))
 	switch {
 	case errors.Is(err, errContactoFueraDeClinica):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})

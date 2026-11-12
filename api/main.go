@@ -13,6 +13,9 @@ import (
 func setupRouter() *gin.Engine {
 	r := gin.Default()
 
+	// requestId por petición: correlaciona la bitácora (RF18).
+	r.Use(requestID())
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "OK"})
 	})
@@ -111,10 +114,17 @@ func setupRouter() *gin.Engine {
 	r.POST("/profesionales/:id/bloqueos", append(secure(OpHorariosBloqueos), createBloqueo)...)
 	r.DELETE("/bloqueos/:id", append(secure(OpHorariosBloqueos), deleteBloqueo)...)
 
+	// RF15: nota clínica (solo el profesional que atendió la cita).
+	r.POST("/citas/:id/nota", append(secure(OpNotaClinica), createNota)...)
+	r.GET("/citas/:id/nota", append(secure(OpNotaClinica), getNota)...)
+
 	// RF20: agenda del día (zona de la clínica).
 	r.GET("/agenda", append(secure(OpAgendaDia), getAgenda)...)
 	// RF21: conteo de citas por estado.
 	r.GET("/citas/resumen", append(secure(OpConteoCitas), getCitasResumen)...)
+
+	// RF19: consulta de la bitácora (matriz: adm-clinica).
+	r.GET("/bitacora", append(secure(OpBitacora), listBitacora)...)
 
 	// Capacidades según matriz RF17; exige también Usuario en Postgres.
 	r.GET("/permisos", authRequired(), loadDomainUser(), func(c *gin.Context) {
@@ -164,6 +174,10 @@ func main() {
 	blockStore = newPGBlockStore(db)
 	agendaStore = newPGAgendaStore(db)
 	statsStore = newPGStatsStore(db)
+
+	// Stores de notas clínicas y auditoría (RF15, RF18-RF19).
+	notaStore = newPGNotaStore(db)
+	auditStore = newPGAuditStore(db)
 
 	// Caché de disponibilidad (RF7/RF8). Todavía no se usa en los handlers.
 	// Una configuración inválida es fatal; una caída de Redis solo deshabilita

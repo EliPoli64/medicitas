@@ -32,7 +32,8 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 - **RF2–RF4 (catálogo de la clínica) — implementado:** gestión de usuarios (`GET|POST /usuarios`, `PATCH /usuarios/:id` con asignación de rol y baja lógica reflejadas en Keycloak, con compensación), catálogo de servicios (`GET /especialidades`, `GET|POST /servicios`, `PATCH /servicios/:id`) y profesionales con servicios habilitados (`GET|POST /profesionales`, `PATCH /profesionales/:id`, `PUT /profesionales/:id/servicios` con reemplazo transaccional y validación de especialidad). Todo bajo `secure(OpGestionCatalogo)` (matriz: solo `adm-clinica`) con tenant del token (I5). Colección [`docs/http/catalogo.http`](docs/http/catalogo.http); prueba de integración `TestIntegrationRF2aRF4Catalogo`.
 - **RF5–RF6 (agenda) — implementado:** horarios semanales (`GET|POST /profesionales/:id/horarios`, `PATCH /horarios/:id`) y bloqueos (`GET|POST /profesionales/:id/bloqueos`, `DELETE /bloqueos/:id`) bajo `secure(OpHorariosBloqueos)`. `adm-clinica` gestiona toda la clínica; `profesional` solo la propia. POST bloqueo lista citas `reservada` en conflicto sin cancelarlas. Tenant desde BD (I5). Colección [`docs/http/agenda.http`](docs/http/agenda.http).
 - **RF14 + RF16 (pacientes) — implementado:** listado/detalle/alta/actualización de pacientes y contactos (`OpPacientesLectura` / `OpPacientesEscritura`) e historial de citas `GET /pacientes/:id/citas` (`OpHistorialPaciente`). Colección [`docs/http/pacientes.http`](docs/http/pacientes.http).
-- **RF7–RF8 (disponibilidad) — implementado:** `GET /profesionales/:id/disponibilidad` (espacios del día: horario − bloqueos − citas vigentes, rejilla configurable, espejo de los triggers del motor) y `GET /servicios/:id/disponibilidad` (por servicio en un rango, con profesionales y sus espacios) bajo `OpConsultarDisponibilidad`. Índices justificados con `EXPLAIN ANALYZE` sobre dataset sintético ([`docs/bench/disponibilidad_bench.sql`](docs/bench/disponibilidad_bench.sql)) en [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http); prueba de integración `TestIntegrationRF7RF8Disponibilidad`. RF9–RF13, RF15, RF18–RF19 y cableado de la caché Redis: pendiente.
+- **RF7–RF8 (disponibilidad) — implementado:** `GET /profesionales/:id/disponibilidad` (espacios del día: horario − bloqueos − citas vigentes, rejilla configurable, espejo de los triggers del motor) y `GET /servicios/:id/disponibilidad` (por servicio en un rango, con profesionales y sus espacios) bajo `OpConsultarDisponibilidad`. Índices justificados con `EXPLAIN ANALYZE` sobre dataset sintético ([`docs/bench/disponibilidad_bench.sql`](docs/bench/disponibilidad_bench.sql)) en [`docs/disponibilidad.md`](docs/disponibilidad.md). Colección [`docs/http/disponibilidad.http`](docs/http/disponibilidad.http); prueba de integración `TestIntegrationRF7RF8Disponibilidad`. RF9–RF13 y cableado de la caché Redis: pendiente.
+- **RF15 + RF18/RF19 (notas clínicas y bitácora) — implementado:** nota clínica `POST|GET /citas/:id/nota` (`OpNotaClinica`, solo el profesional que atendió la cita, solo cita atendida, sin duplicados) y bitácora append-only de toda lectura/escritura de notas y contactos (`api/audit.go`): las escrituras se registran en la misma transacción que el hecho, las lecturas se registran antes de responder y sin rastro no se sirve el dato. `GET /bitacora` (`OpBitacora`, solo `adm-clinica`) con filtros por usuario, paciente y rango de fechas. Append-only protegido a nivel de motor (I6) y verificado por la prueba de integración. Colecciones [`docs/http/notas.http`](docs/http/notas.http) y [`docs/http/bitacora.http`](docs/http/bitacora.http); prueba de integración `TestIntegrationRF15RF18RF19NotasBitacora`.
 - **RF20 + RF21 (operación diaria) — implementado:** agenda del día `GET /agenda?fecha=` (`OpAgendaDia`, día en `zonaHoraria` de la clínica) y conteo por estado `GET /citas/resumen?desde=&hasta=` (`OpConteoCitas`). Profesional solo ve lo propio. Colección [`docs/http/operacion.http`](docs/http/operacion.http). Mapa vivo: [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md).
 - **Redis:** paquete [`api/internal/availabilitycache`](api/internal/availabilitycache/) implementado y probado de forma aislada y contra Redis real (claves por agenda, epochs, TTL, fallback al `Loader`). **Integración con RF7/API pendiente.** Diseño y pruebas: [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md). Responsable: Cristian.
 
@@ -204,6 +205,23 @@ Modelo de cálculo, contrato completo e **justificación de índices con planes 
 - `GET /pacientes/:id/citas` — historial con `estado` (RF16). Paciente ajeno a la clínica → `404`.
 
 Colección: [`docs/http/pacientes.http`](docs/http/pacientes.http).
+
+### Notas clínicas — RF15
+
+Permiso (matriz RF17): **solo `profesional`** (`OpNotaClinica`) y solo sobre la cita que él atendió. Dato más sensible del sistema: el historial RF16 no lo expone.
+
+- `POST /citas/:id/nota` — body `{contenido}`. Solo si la cita está `atendida` (`409` si no) y no tiene nota (`409` si ya existe). → `201` / `400` (contenido vacío) / `403` (otro profesional o no es profesional) / `404` (cita no es de la clínica, I5).
+- `GET /citas/:id/nota` → `200` / `403` / `404`. Su lectura queda registrada en la bitácora (RF18).
+
+Colección: [`docs/http/notas.http`](docs/http/notas.http).
+
+### Bitácora — RF18 / RF19
+
+Toda **lectura y escritura** de notas clínicas y datos de contacto de pacientes queda en la bitácora append-only (`"Auditoria"`) con quién, qué, sobre cuál paciente y cuándo. Las escrituras se registran en la misma transacción que el hecho; las lecturas se registran antes de responder y **sin rastro no se sirve el dato**. Append-only protegido a nivel de motor (I6: triggers que rechazan `UPDATE`/`DELETE`/`TRUNCATE`). La metadata nunca contiene valores sensibles.
+
+- `GET /bitacora` — solo `adm-clinica` (`OpBitacora`). Query: `usuarioId`, `pacienteId` (uuid), `desde`, `hasta` (`YYYY-MM-DD`, zona de la clínica), `limit` (1–500, por defecto 100). Tenant siempre del token: manipular `?pacienteId=` no cruza de clínica (I5). → `200` / `400` (filtros inválidos) / `401` / `403`.
+
+Colección: [`docs/http/bitacora.http`](docs/http/bitacora.http).
 
 ### Agenda del día y conteo — RF20 / RF21
 

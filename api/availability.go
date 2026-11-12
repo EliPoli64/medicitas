@@ -38,9 +38,9 @@ import (
 )
 
 var (
-	errServicioDispoFuera    = errors.New("servicio no encontrado en la clínica")
-	errServicioDispoInactivo = errors.New("el servicio no está activo")
-	errProfesionalDispoFuera = errors.New("profesional no encontrado en la clínica")
+	errServicioDispoFuera       = errors.New("servicio no encontrado en la clínica")
+	errServicioDispoInactivo    = errors.New("el servicio no está activo")
+	errProfesionalDispoFuera    = errors.New("profesional no encontrado en la clínica")
 	errProfesionalDispoInactivo = errors.New("el profesional no está activo")
 	errProfesionalSinServicio   = errors.New("el profesional no está habilitado para el servicio")
 	errFechaDispoInvalida       = errors.New("fecha inválida; usar YYYY-MM-DD")
@@ -49,11 +49,11 @@ var (
 )
 
 const (
-	pasoDispoDefault    = 30
-	pasoDispoMin        = 5
-	pasoDispoMax        = 120
-	rangoDispoMaxDias   = 62
-	minutosPorDia       = 24 * 60
+	pasoDispoDefault  = 30
+	pasoDispoMin      = 5
+	pasoDispoMax      = 120
+	rangoDispoMaxDias = 62
+	minutosPorDia     = 24 * 60
 )
 
 // Espacio es un intervalo disponible calculado (RF7). Inicio/Fin viajan como
@@ -93,10 +93,10 @@ type DatosAgenda struct {
 // ProfesionalDispo identifica a un profesional para la consulta de
 // disponibilidad (RF7/RF8).
 type ProfesionalDispo struct {
-	ID            string `json:"id"`
-	IdpSub        string `json:"idpSub"`
-	Especialidad  string `json:"especialidad"`
-	Activo        bool   `json:"activo"`
+	ID           string `json:"id"`
+	IdpSub       string `json:"idpSub"`
+	Especialidad string `json:"especialidad"`
+	Activo       bool   `json:"activo"`
 }
 
 // DisponibilidadStore abstrae la persistencia de RF7/RF8 (tests sin Postgres).
@@ -482,7 +482,7 @@ var nowFn = time.Now
 
 // DisponibilidadFecha agrupa la disponibilidad de un día (RF8).
 type DisponibilidadFecha struct {
-	Fecha         string                     `json:"fecha"`
+	Fecha         string                      `json:"fecha"`
 	Profesionales []DisponibilidadProfesional `json:"profesionales"`
 }
 

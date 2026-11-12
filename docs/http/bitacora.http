@@ -1,0 +1,70 @@
+### MediCitas — colección RF19 (bitácora)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### Permiso (matriz RF17): SOLO adm-clinica (OpBitacora) → 401/403 para el resto.
+### La bitácora es append-only a nivel de motor (I6): su única vía es la API,
+### que solo INSERTA. Nunca contiene valores sensibles: solo quién, qué, sobre
+### cuál paciente y cuándo.
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token del administrador de clínica norte
+# @name tokenAdm
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-norte&password=cambiar_en_local&grant_type=password
+
+### 2) Bitácora completa (últimas 100 entradas)
+GET {{host}}/bitacora
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 3) Filtro por usuario (uuid de "Usuario")
+GET {{host}}/bitacora?usuarioId=00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 4) Filtro por paciente (uuid de "Paciente")
+GET {{host}}/bitacora?pacienteId=00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 5) Filtro por rango de fechas (zona horaria de la clínica) y límite
+GET {{host}}/bitacora?desde=2026-11-01&hasta=2026-11-30&limit=20
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### 6) Filtros inválidos → 400
+GET {{host}}/bitacora?pacienteId=abc&limit=999
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+
+### --- Matriz y aislamiento ---
+
+### 7) Recepción NO consulta la bitácora → 403
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+###
+GET {{host}}/bitacora
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### 8) Profesional tampoco → 403
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password=cambiar_en_local&grant_type=password
+
+###
+GET {{host}}/bitacora
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+### 9) Sin token → 401
+GET {{host}}/bitacora
+
+### 10) Manipular ?pacienteId= no cruza de clínica (I5): otra clínica ve vacío
+GET {{host}}/bitacora?pacienteId=00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{tokenAdm.response.body.access_token}}

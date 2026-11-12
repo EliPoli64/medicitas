@@ -25,8 +25,8 @@ const (
 	OpHistorialPaciente           Operation = "HistorialPaciente"
 	OpBitacora                    Operation = "Bitacora"
 	// Extensión documentada de la matriz (operación diaria; no figuran en el PDF).
-	OpAgendaDia                   Operation = "AgendaDia"
-	OpConteoCitas                 Operation = "ConteoCitas"
+	OpAgendaDia   Operation = "AgendaDia"
+	OpConteoCitas Operation = "ConteoCitas"
 
 	RoleAdmPlataforma = "adm-plataforma"
 	RoleAdmClinica    = "adm-clinica"

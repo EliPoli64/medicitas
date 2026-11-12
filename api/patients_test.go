@@ -16,6 +16,7 @@ type fakePatientStore struct {
 	contactos   map[string]PatientContact
 	citas       map[string][]PatientAppointment
 	lastClinica string
+	lastActor   AuditActor
 	createErr   error
 }
 
@@ -54,9 +55,10 @@ func (f *fakePatientStore) GetPaciente(_ context.Context, clinicaIdent, id strin
 	return p, nil
 }
 
-func (f *fakePatientStore) CreatePaciente(_ context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput) (Patient, error) {
+func (f *fakePatientStore) CreatePaciente(_ context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput, actor AuditActor) (Patient, error) {
 	f.ensure()
 	f.lastClinica = clinicaIdent
+	f.lastActor = actor
 	if f.createErr != nil {
 		return Patient{}, f.createErr
 	}
@@ -106,7 +108,9 @@ func (f *fakePatientStore) UpdatePaciente(_ context.Context, clinicaIdent, id st
 	return p, nil
 }
 
-func (f *fakePatientStore) CreateContacto(_ context.Context, clinicaIdent, pacienteID string, in ContactInput) (PatientContact, error) {
+func (f *fakePatientStore) CreateContacto(_ context.Context, clinicaIdent, pacienteID string, in ContactInput, actor AuditActor) (PatientContact, error) {
+	f.ensure()
+	f.lastActor = actor
 	f.ensure()
 	f.lastClinica = clinicaIdent
 	if _, err := f.GetPaciente(context.Background(), clinicaIdent, pacienteID); err != nil {
@@ -120,7 +124,9 @@ func (f *fakePatientStore) CreateContacto(_ context.Context, clinicaIdent, pacie
 	return ct, nil
 }
 
-func (f *fakePatientStore) UpdateContacto(_ context.Context, clinicaIdent, contactoID string, patch ContactPatch) (PatientContact, error) {
+func (f *fakePatientStore) UpdateContacto(_ context.Context, clinicaIdent, contactoID string, patch ContactPatch, actor AuditActor) (PatientContact, error) {
+	f.ensure()
+	f.lastActor = actor
 	f.ensure()
 	f.lastClinica = clinicaIdent
 	ct, ok := f.contactos[contactoID]
@@ -165,6 +171,13 @@ func setupPacientesWriteEnv(t *testing.T, srvURL string, store PatientStore, use
 	prev := patientStore
 	patientStore = store
 	t.Cleanup(func() { patientStore = prev })
+	// La lectura de contactos exige bitácora (RF18): spy por defecto si el
+	// test no inyecta el suyo antes.
+	prevAudit := auditStore
+	if auditStore == nil {
+		auditStore = &fakeAuditStore{}
+	}
+	t.Cleanup(func() { auditStore = prevAudit })
 	gin.SetMode(gin.TestMode)
 	return setupRouter()
 }

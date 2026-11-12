@@ -49,10 +49,10 @@ const (
 
 // Identity es lo que las rutas leen del JWT ya validado.
 type Identity struct {
-	Sub      string   `json:"sub"`
-	Username string   `json:"username"`
-	Roles    []string `json:"roles"`
-	ClinicaID string  `json:"clinicaId"` // vacío si adm-plataforma
+	Sub       string   `json:"sub"`
+	Username  string   `json:"username"`
+	Roles     []string `json:"roles"`
+	ClinicaID string   `json:"clinicaId"` // vacío si adm-plataforma
 }
 
 type jwk struct {
