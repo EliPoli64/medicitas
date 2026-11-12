@@ -170,6 +170,7 @@ func main() {
 	serviceStore = newPGServiceStore(db)
 	professionalStore = newPGProfessionalStore(db)
 	disponibilidadStore = newPGDisponibilidadStore(db)
+	loaderDisponibilidad = newDisponibilidadLoader(disponibilidadStore)
 	scheduleStore = newPGScheduleStore(db)
 	blockStore = newPGBlockStore(db)
 	agendaStore = newPGAgendaStore(db)

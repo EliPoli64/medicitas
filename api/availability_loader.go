@@ -34,6 +34,12 @@ type disponibilidadLoader struct {
 	store DisponibilidadStore
 }
 
+// loaderDisponibilidad es el loader global. Se inicializa en main con el store
+// real; los tests pueden reemplazarlo junto con disponibilidadStore.
+var loaderDisponibilidad interface {
+	Load(context.Context, availabilitycache.Request) (availabilitycache.Snapshot, error)
+}
+
 // newDisponibilidadLoader construye el adaptador. El store puede ser el
 // pgDisponibilidadStore real o cualquier implementación de DisponibilidadStore.
 func newDisponibilidadLoader(store DisponibilidadStore) *disponibilidadLoader {

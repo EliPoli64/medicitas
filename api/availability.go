@@ -34,6 +34,8 @@ import (
 	"strings"
 	"time"
 
+	"medicitas/api/internal/availabilitycache"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -549,6 +551,10 @@ func resolverDisponibilidad(c *gin.Context, servicioID string) (
 //
 // Query: fecha=YYYY-MM-DD (obligatoria), servicioId (obligatorio: la duración
 // viene del servicio, I4), pasoMinutos (opcional, 5–120, por defecto 30).
+//
+// Etapa 6: el cálculo pasa por availabilitycache.GetOrLoad cuando la caché
+// está habilitada; si Redis no responde o el Snapshot no se puede validar, se
+// calcula directamente desde PostgreSQL.
 func listDisponibilidadProfesional(c *gin.Context) {
 	profesionalID := c.Param("id")
 	servicioID := c.Query("servicioId")
@@ -562,47 +568,93 @@ func listDisponibilidadProfesional(c *gin.Context) {
 		return
 	}
 
-	clinica, zona, loc, duracion, paso, ok := resolverDisponibilidad(c, servicioID)
-	if !ok {
+	clinica, okClinica := clinicaFromContext(c, false, "")
+	if !okClinica {
 		return
 	}
 
-	fecha, err := time.ParseInLocation("2006-01-02", fechaStr, loc)
+	paso := pasoDispoDefault
+	if v := c.Query("pasoMinutos"); v != "" {
+		n, convErr := strconv.Atoi(v)
+		if convErr != nil || n < pasoDispoMin || n > pasoDispoMax {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errPasoDispoInvalido.Error()})
+			return
+		}
+		paso = n
+	}
+
+	if disponibilidadStore == nil || loaderDisponibilidad == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "servicio de disponibilidad no disponible"})
+		return
+	}
+
+	req := availabilitycache.Request{
+		ClinicaID:     clinica,
+		ProfesionalID: profesionalID,
+		ServicioID:    servicioID,
+		Fecha:         fechaStr,
+		PasoMinutos:   paso,
+	}
+
+	ctx := c.Request.Context()
+	var snapshot availabilitycache.Snapshot
+	var loadErr error
+
+	if availabilityCache != nil {
+		result, err := availabilityCache.GetOrLoad(ctx, req, loaderDisponibilidad.Load)
+		if err != nil {
+			loadErr = err
+		} else {
+			if result.CacheErr != nil && errors.Is(result.CacheErr, availabilitycache.ErrStaleSnapshot) {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "disponibilidad temporalmente inconsistente, reintentar"})
+				return
+			}
+			snapshot = result.Snapshot
+		}
+	} else {
+		snapshot, loadErr = loaderDisponibilidad.Load(ctx, req)
+	}
+
+	if loadErr != nil {
+		switch {
+		case errors.Is(loadErr, availabilitycache.ErrInvalidRequest):
+			c.JSON(http.StatusBadRequest, gin.H{"error": loadErr.Error()})
+		case errors.Is(loadErr, errServicioDispoFuera):
+			c.JSON(http.StatusNotFound, gin.H{"error": errServicioDispoFuera.Error()})
+		case errors.Is(loadErr, errServicioDispoInactivo):
+			c.JSON(http.StatusBadRequest, gin.H{"error": errServicioDispoInactivo.Error()})
+		case errors.Is(loadErr, errProfesionalDispoFuera):
+			c.JSON(http.StatusNotFound, gin.H{"error": errProfesionalDispoFuera.Error()})
+		case errors.Is(loadErr, errProfesionalDispoInactivo):
+			c.JSON(http.StatusBadRequest, gin.H{"error": errProfesionalDispoInactivo.Error()})
+		case errors.Is(loadErr, errProfesionalSinServicio):
+			c.JSON(http.StatusBadRequest, gin.H{"error": errProfesionalSinServicio.Error()})
+		case errors.Is(loadErr, errFechaDispoInvalida):
+			c.JSON(http.StatusBadRequest, gin.H{"error": errFechaDispoInvalida.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo calcular la disponibilidad"})
+		}
+		return
+	}
+
+	loc, err := time.LoadLocation(snapshot.ZonaHoraria)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": errFechaDispoInvalida.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "zona horaria de la clínica no es válida"})
 		return
 	}
-
-	prof, err := disponibilidadStore.ProfesionalDispo(c.Request.Context(), clinica, profesionalID)
-	switch {
-	case errors.Is(err, errProfesionalDispoFuera):
-		c.JSON(http.StatusNotFound, gin.H{"error": errProfesionalDispoFuera.Error()})
-		return
-	case err != nil:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo consultar el profesional"})
-		return
-	}
-	if !prof.Activo {
-		c.JSON(http.StatusBadRequest, gin.H{"error": errProfesionalDispoInactivo.Error()})
-		return
-	}
-	habilitado, err := disponibilidadStore.ProfesionalHabilitado(c.Request.Context(), clinica, profesionalID, servicioID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo verificar la habilitación del profesional"})
-		return
-	}
-	if !habilitado {
-		c.JSON(http.StatusBadRequest, gin.H{"error": errProfesionalSinServicio.Error()})
-		return
-	}
-
+	fecha, _ := time.ParseInLocation("2006-01-02", snapshot.Fecha, loc)
 	dia := time.Date(fecha.Year(), fecha.Month(), fecha.Day(), 0, 0, 0, 0, loc)
-	datos, err := disponibilidadStore.DatosAgenda(c.Request.Context(), clinica, profesionalID, dia, dia.AddDate(0, 0, 1))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo calcular la disponibilidad"})
-		return
+
+	espacios := make([]Espacio, len(snapshot.Espacios))
+	for i, slot := range snapshot.Espacios {
+		inicioLocal := slot.Inicio.In(loc)
+		k := int(inicioLocal.Sub(dia) / time.Minute)
+		espacios[i] = Espacio{
+			Inicio:    inicioLocal,
+			Fin:       slot.Fin.In(loc),
+			HoraLocal: fmt.Sprintf("%02d:%02d", k/60, k%60),
+		}
 	}
-	espacios := espaciosDelDia(datos, fecha, loc, duracion, paso, nowFn())
 	if espacios == nil {
 		espacios = []Espacio{}
 	}
@@ -612,9 +664,9 @@ func listDisponibilidadProfesional(c *gin.Context) {
 		"profesionalId":        profesionalID,
 		"servicioId":           servicioID,
 		"fecha":                fechaStr,
-		"zonaHoraria":          zona,
-		"duracionMinutos":      duracion,
-		"pasoMinutos":          paso,
+		"zonaHoraria":          snapshot.ZonaHoraria,
+		"duracionMinutos":      snapshot.DuracionMinutos,
+		"pasoMinutos":          snapshot.PasoMinutos,
 		"espacios":             espacios,
 	})
 }

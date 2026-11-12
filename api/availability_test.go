@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"medicitas/api/internal/availabilitycache"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -332,9 +334,17 @@ func (f *fakeDispoStore) DatosAgenda(_ context.Context, clinicaIdent, profesiona
 func setupDispoTestEnv(t *testing.T, srvURL string, dispo DisponibilidadStore, users map[string]DomainUser) *gin.Engine {
 	t.Helper()
 	r := setupCatalogoTestEnv(t, srvURL, nil, nil, nil, &fakeIdentityAdmin{}, users)
-	prev := disponibilidadStore
+	prevStore := disponibilidadStore
+	prevLoader := loaderDisponibilidad
+	prevCache := availabilityCache
 	disponibilidadStore = dispo
-	t.Cleanup(func() { disponibilidadStore = prev })
+	loaderDisponibilidad = newDisponibilidadLoader(dispo)
+	availabilityCache = nil // las pruebas unitarias de RF7 no usan Redis
+	t.Cleanup(func() {
+		disponibilidadStore = prevStore
+		loaderDisponibilidad = prevLoader
+		availabilityCache = prevCache
+	})
 	return r
 }
 
@@ -381,6 +391,81 @@ func TestDisponibilidadProfesionalOK(t *testing.T) {
 	}
 	if !contains(body, `"duracionMinutos":30`) || !contains(body, `"zonaHoraria":"America/Costa_Rica"`) {
 		t.Fatalf("metadatos ausentes: %s", body)
+	}
+}
+
+// countingLoaderEnvuelve un LoaderFunc contando invocaciones.
+type countingLoaderEnvuelve struct {
+	inner availabilitycache.LoaderFunc
+	calls int
+}
+
+func (c *countingLoaderEnvuelve) Load(ctx context.Context, req availabilitycache.Request) (availabilitycache.Snapshot, error) {
+	c.calls++
+	return c.inner(ctx, req)
+}
+
+func TestDisponibilidadProfesionalUsaCache(t *testing.T) {
+	tk := newTestKeys(t)
+	srv := tk.jwksServer()
+	defer srv.Close()
+
+	prevNow := nowFn
+	nowFn = func() time.Time { return fechaLocal(t, 2030, 3, 11, 7, 0) }
+	t.Cleanup(func() { nowFn = prevNow })
+
+	dispo := &fakeDispoStore{
+		duracion: 30,
+		activo:   true,
+		prof:     ProfesionalDispo{ID: "p1", IdpSub: "sub-1", Especialidad: "Cardiología", Activo: true},
+		hab:      true,
+		datos: map[string]DatosAgenda{
+			"p1": {Horarios: []HorarioAgenda{{
+				DiaSemana: isoDow(time.Monday), MinutoInicio: 8 * 60, MinutoFin: 12 * 60,
+				VigenteDesde: "2030-01-01",
+			}}},
+		},
+	}
+	r := setupDispoTestEnv(t, srv.URL, dispo, admClinicaUser())
+
+	// Cache real respaldada por un store en memoria; el resolver no-op permite
+	// que los HITs se sirvan sin PostgreSQL.
+	store := newRecordingCacheStore()
+	cache, err := availabilitycache.NewCache(
+		store,
+		availabilitycache.DefaultConfig(),
+		availabilitycache.WithVersionResolver(nopAgendaVersionResolver{}),
+	)
+	if err != nil {
+		t.Fatalf("NewCache() error = %v", err)
+	}
+
+	prevCache := availabilityCache
+	availabilityCache = cache
+	prevLoader := loaderDisponibilidad
+	counter := &countingLoaderEnvuelve{inner: newDisponibilidadLoader(dispo).Load}
+	loaderDisponibilidad = counter
+	t.Cleanup(func() {
+		availabilityCache = prevCache
+		loaderDisponibilidad = prevLoader
+	})
+
+	query := "/profesionales/p1/disponibilidad?fecha=2030-03-11&servicioId=s1"
+
+	// Primera consulta: miss, invoca al loader.
+	if code, _ := doGet(t, r, query, mintAdm(t, tk)); code != http.StatusOK {
+		t.Fatalf("first status=%d, want 200", code)
+	}
+	if counter.calls != 1 {
+		t.Fatalf("loader calls after first = %d, want 1", counter.calls)
+	}
+
+	// Segunda consulta: hit, no vuelve a invocar al loader.
+	if code, _ := doGet(t, r, query, mintAdm(t, tk)); code != http.StatusOK {
+		t.Fatalf("second status=%d, want 200", code)
+	}
+	if counter.calls != 1 {
+		t.Fatalf("loader calls after second = %d, want 1", counter.calls)
 	}
 }
 
