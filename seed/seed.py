@@ -28,6 +28,7 @@ from catalog import (
     relative_weekday,
 )
 from keycloak_admin import KeycloakAdmin, KeycloakError
+from migrations import apply_migrations
 
 SEED_LOCK_KEY = "medicitas-seed"
 
@@ -659,6 +660,12 @@ def main() -> int:
             "SELECT pg_advisory_lock(hashtext(%s))",
             (SEED_LOCK_KEY,),
         )
+
+        # Aplicar migraciones SQL pendientes antes de sembrar. Esto permite
+        # actualizar bases de datos existentes sin recrear el volumen.
+        applied = apply_migrations(conn)
+        if applied:
+            print(f"Migraciones aplicadas: {', '.join(applied)}")
 
         with conn.cursor() as cur:
             cur.execute(

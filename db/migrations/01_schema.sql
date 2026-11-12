@@ -1014,3 +1014,10 @@ INSERT INTO "TipoContacto" ("codigo", "nombre") VALUES
     ('email',     'Correo electrónico'),
     ('direccion', 'Dirección')
 ON CONFLICT ("codigo") DO NOTHING;
+
+-- Registro de migración para que el job seed pueda distinguir que el esquema
+-- base ya está presente en bases nuevas (aplicadas por initdb.d) y en bases
+-- existentes.
+INSERT INTO ops."Migracion" ("version", "checksum", "exito", "detalle")
+VALUES ('01_schema', 'initdb', true, 'esquema base aplicado por initdb.d')
+ON CONFLICT ("version") DO NOTHING;

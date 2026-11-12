@@ -1,17 +1,28 @@
-# Archivos que no deben entrar en contextos de build de Docker.
-
-.env
-.env.*
-!.env.example
+# Git
 .git
 .gitignore
-data/
-tmp/
-coverage/
-node_modules/
-vendor/
-.venv/
-venv/
-__pycache__/
+
+# Secretos y variables de entorno
+.env
+.env.*
+*.env
+*.pem
+*.key
+
+# Docker Compose / Dockerfiles no necesarios en las imágenes
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# IDEs
+.vscode
+.idea
+
+# Logs y temporales
 *.log
-README.md
+tmp/
+temp/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

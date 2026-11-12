@@ -73,11 +73,13 @@ services:
       timeout: 3s
       retries: 5
 
-  # Job one-shot: carga la semilla y termina. No es un servicio permanente.
-  # En cada `docker compose up` comprueba ops."Semilla"; si ya se aplicó, sale
-  # con 0 sin duplicar datos.
+  # Job one-shot: aplica migraciones SQL pendientes y luego carga la semilla.
+  # En cada `docker compose up` ejecuta ambas tareas; si ya están aplicadas,
+  # sale con 0 sin duplicar datos.
   seed:
-    build: ./seed
+    build:
+      context: .
+      dockerfile: seed/Dockerfile
     env_file: [.env]
     environment:
       DB_HOST: db
@@ -85,7 +87,7 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_NAME: ${POSTGRES_DB}
-      KC_URL: http://keycloak:6767
+      KC_URL: http://keycloak:${KC_HTTP_PORT:-6767}
       KC_REALM: ${KC_REALM}
       KC_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
       KC_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
@@ -113,7 +115,7 @@ services:
       KC_ISSUER_URL: ${KC_ISSUER_URL}
       KC_JWKS_URL: ${KC_JWKS_URL}
       # Admin API (RF1/RF2): provisiona identidades. Mismo admin que el seed.
-      KC_ADMIN_URL: http://keycloak:6767
+      KC_ADMIN_URL: http://keycloak:${KC_HTTP_PORT:-6767}
       KC_REALM: ${KC_REALM}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
