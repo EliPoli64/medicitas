@@ -26,7 +26,7 @@ import (
 	"medicitas/api/internal/availabilityversion"
 )
 
-func newIntegrationRedisStoreForVersion(t *testing.T) *availabilitycache.RedisStore {
+func newIntegrationRedisStoreForVersion(t testing.TB) *availabilitycache.RedisStore {
 	t.Helper()
 
 	addr := os.Getenv("REDIS_ADDR")
@@ -62,7 +62,7 @@ func newIntegrationRedisStoreForVersion(t *testing.T) *availabilitycache.RedisSt
 	return store
 }
 
-func cleanupPrefixFromStore(t *testing.T, store *availabilitycache.RedisStore, prefix string) {
+func cleanupPrefixFromStore(t testing.TB, store *availabilitycache.RedisStore, prefix string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -73,7 +73,7 @@ func cleanupPrefixFromStore(t *testing.T, store *availabilitycache.RedisStore, p
 	}
 }
 
-func identificadorDeClinica(t *testing.T, db *sql.DB, clinicaID string) string {
+func identificadorDeClinica(t testing.TB, db *sql.DB, clinicaID string) string {
 	t.Helper()
 
 	var ident string

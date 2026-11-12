@@ -198,13 +198,19 @@ una vez por rango (no por fecha).
 - **Horarios con segundos**: el inicio del bloque se redondea hacia arriba y el
   fin hacia abajo al pasar a minutos, para que ningún espacio calculado pueda
   ser rechazado por el trigger.
-- **Caché**: este cálculo queda como `LoaderFunc` de
-  [`api/internal/availabilitycache`](../api/internal/availabilitycache/doc.go)
-  cuando se conecte RF7 a Redis (§6 del pliego). La forma del dato ya coincide:
-  espacios `inicio/fin` por (clínica, profesional, servicio, fecha). El
-  cableado y la prueba de I8 son el siguiente paso; la fuente de verdad sigue
-  siendo Postgres.
-- **Pruebas**: 21 unitarias (cálculo puro + handlers con store falso) y
-  `TestIntegrationRF7RF8Disponibilidad` contra la pila real, que cubre jornada
-  partida, cita ocupada que desaparece (I7), bloqueo que retira espacios
-  (RF6), agrupación de RF8, matriz completa y aislamiento (I5).
+- **Caché**: el cálculo está cableado como `LoaderFunc` de
+  [`api/internal/availabilitycache`](../api/internal/availabilitycache/cache.go).
+  RF7 consulta la caché cuando está disponible y valida cada HIT contra
+  `AgendaVersion` en PostgreSQL (doble barrera: epochs + versión). Ver
+  [`docs/cache-disponibilidad.md`](cache-disponibilidad.md) para el diseño
+  completo.
+- **Pruebas**: 21 unitarias (cálculo puro + handlers con store falso),
+  `TestIntegrationRF7RF8Disponibilidad` contra la pila real y seis pruebas de
+  integración adicionales en
+  [`api/availability_rf7_cache_integration_test.go`](../api/availability_rf7_cache_integration_test.go)
+  que cubren MISS→HIT, invalidación por bloqueo, invalidación por cita
+  reservada (I8), aislamiento entre clínicas, fallback si Redis cae y
+  concurrencia.
+- **Benchmark**: [`api/availability_rf7_bench_test.go`](../api/availability_rf7_bench_test.go)
+  reporta que un HIT válido de Redis es ~3.3× más rápido que el cálculo directo
+  desde PostgreSQL en el entorno medido (ver [`docs/cache-disponibilidad.md`](cache-disponibilidad.md)).

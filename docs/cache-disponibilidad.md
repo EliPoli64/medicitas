@@ -2,9 +2,9 @@
 
 Documento de diseño del módulo Redis de MediCitas (RF7, I7, I8).
 
-**Estado:** el paquete [`api/internal/availabilitycache`](../api/internal/availabilitycache/) está implementado y probado de forma aislada y contra Redis real. **Todavía no está conectado a la API, a RF7 ni a PostgreSQL.** La fuente de verdad sigue siendo PostgreSQL; Redis solo guarda copias derivadas de la disponibilidad.
+**Estado:** el paquete [`api/internal/availabilitycache`](../api/internal/availabilitycache/) está implementado, conectado a RF7 a través de [`api/availability.go`](../api/availability.go) e integrado con PostgreSQL mediante [`api/internal/availabilityversion`](../api/internal/availabilityversion/). La fuente de verdad sigue siendo PostgreSQL; Redis solo guarda snapshots derivados de la disponibilidad. I8 se demuestra con una prueba de integración que reserva una cita vía SQL y verifica que la siguiente consulta RF7 ya no ofrece el espacio, validando el snapshot con `AgendaVersion`.
 
-Este documento describe lo que existe, lo que se probó y lo que queda pendiente de integrar. No afirma que I8 esté demostrado a nivel de sistema: esa prueba requiere la API y la base de datos reales.
+Este documento describe la arquitectura actual, las claves, la doble barrera de invalidación (epochs + `AgendaVersion`), el fallback, las pruebas, un benchmark comparativo y las limitaciones pendientes.
 
 ---
 
@@ -14,53 +14,66 @@ Este documento describe lo que existe, lo que se probó y lo que queda pendiente
 Cliente HTTP
     │
     ▼
-API / handler de disponibilidad (futuro, RF7/RF8)
+API / handler de disponibilidad (RF7/RF8)
     │
-    ├── load(ctx, Request) ──────────────► PostgreSQL (fuente de verdad)
-    │                                           ▲
-    │                                           │ RF7: horarios, bloqueos,
-    │                                           │ duración y citas vigentes
-    ▼                                           │
+    ├── loaderDisponibilidad.Load(ctx, Request) ──► PostgreSQL (fuente de verdad)
+    │                                                  ▲
+    │                                                  │ horarios, bloqueos,
+    │                                                  │ duración y citas vigentes
+    ▼                                                  │
 availabilitycache.Cache ──── Store ──── RedisStore ──── Redis
+    │
+    ├── AgendaVersionResolver ────────────────────► PostgreSQL (AgendaVersion)
     │
     └── InvalidateAgenda(ctx, clinicaID, profesionalID)
 ```
 
-El paquete no conoce HTTP, PostgreSQL ni Keycloak. Recibe un `LoaderFunc` que calcula la disponibilidad y un `Store` que abstrae Redis. Esa separación permite:
+El paquete `availabilitycache` no conoce HTTP, PostgreSQL ni Keycloak. Recibe:
+
+- un `LoaderFunc` ([`api/availability_loader.go`](../api/availability_loader.go)) que calcula la disponibilidad desde PostgreSQL;
+- un `Store` ([`api/internal/availabilitycache/redis.go`](../api/internal/availabilitycache/redis.go)) que abstrae Redis;
+- un `AgendaVersionResolver` opcional ([`api/internal/availabilityversion/postgres.go`](../api/internal/availabilityversion/postgres.go)) que consulta la versión autoritativa de la agenda.
+
+Esa separación permite:
 
 - probar la política de caché con un `Store` falso, sin levantar Redis;
 - cambiar la implementación de Redis sin tocar la lógica;
-- conectar RF7 más adelante sin acoplar el cálculo de disponibilidad a la caché.
+- mantener la fuente de verdad en PostgreSQL mientras Redis acelera lecturas repetidas.
 
 ### Componentes
 
 | Componente | Archivo | Responsabilidad |
 |---|---|---|
-| `Cache` | [`cache.go`](../api/internal/availabilitycache/cache.go) | `GetOrLoad` e `InvalidateAgenda` |
+| `Cache` | [`cache.go`](../api/internal/availabilitycache/cache.go) | `GetOrLoad` e `InvalidateAgenda`; validación por `AgendaVersion` |
 | Configuración | [`config.go`](../api/internal/availabilitycache/config.go) | Validación de `Config` |
-| `keyBuilder` | [`keys.go`](../api/internal/availabilitycache/keys.go) | Construir y validar claves |
+| `keyBuilder` | [`keys.go`](../api/internal/availabilitycache/keys.go) | Construir y validar claves (formato v2 incluye `pasoMinutos`) |
 | `RedisStore` | [`redis.go`](../api/internal/availabilitycache/redis.go) | `Get`, `Set`, `SetNX`, `Ping`, `Close` sobre go-redis |
 | Epochs | [`epoch.go`](../api/internal/availabilitycache/epoch.go) | Tokens aleatorios, lectura e inicialización concurrente |
-| Códec | [`codec.go`](../api/internal/availabilitycache/codec.go) | Serializar, normalizar y validar `Snapshot` |
-| Contratos | [`interfaces.go`](../api/internal/availabilitycache/interfaces.go), [`types.go`](../api/internal/availabilitycache/types.go) | `Store`, `LoaderFunc`, `Request`, `Snapshot`, `Result`, `Config` |
+| Códec | [`codec.go`](../api/internal/availabilitycache/codec.go) | Serializar, normalizar y validar `Snapshot` v3 |
+| Contratos | [`interfaces.go`](../api/internal/availabilitycache/interfaces.go), [`types.go`](../api/internal/availabilitycache/types.go) | `Store`, `LoaderFunc`, `AgendaVersionResolver`, `Request`, `Snapshot`, `Result`, `Config` |
 | Errores | [`errors.go`](../api/internal/availabilitycache/errors.go) | Errores centinela para distinguir fallos |
+| Loader RF7 | [`availability_loader.go`](../api/availability_loader.go) | Adapta el cálculo de RF7 al contrato `LoaderFunc` |
+| Resolver `AgendaVersion` | [`availabilityversion/postgres.go`](../api/internal/availabilityversion/postgres.go) | Consulta `AgendaVersion` en PostgreSQL |
+| Handler RF7 | [`availability.go`](../api/availability.go) | Expone el endpoint y decide caché vs cálculo directo |
 
 ### Flujo de lectura
 
-1. La API valida la petición y construye un `Request` con la clínica tomada del token, nunca de un parámetro libre.
+1. El handler RF7 valida la petición y construye un `Request` con la clínica tomada del token, nunca de un parámetro libre.
 2. `GetOrLoad` obtiene el epoch vigente de `(clínica, profesional)`.
 3. Construye la clave de datos con ese epoch.
 4. Intenta leer Redis.
-5. Si hay un `Snapshot` válido, responde con `Hit: true`.
-6. Si no hay entrada, el epoch falla, Redis falla o el valor es inválido, recurre al `Loader`.
-7. Cuando corresponde, guarda el resultado bajo el epoch leído.
+5. Si hay un `Snapshot` v3, consulta `AgendaVersion` en PostgreSQL.
+6. Si la versión del snapshot coincide con la versión autoritativa, responde con `Hit: true`.
+7. Si la versión difiere, el epoch cambió, Redis falla, no hay entrada o el valor es inválido, recurre al `Loader`.
+8. Cuando corresponde, guarda el resultado bajo el epoch leído y etiqueta el snapshot con la `AgendaVersion` actual.
 
-### Flujo de escritura (futuro, al reservar)
+### Flujo de escritura (al reservar/cancelar/reprogramar)
 
-1. La API ejecuta la reserva en PostgreSQL dentro de una transacción.
-2. Si el COMMIT es exitoso, llama a `InvalidateAgenda(ctx, clínica, profesional)`.
-3. La próxima consulta obtiene un epoch nuevo y recalcula la agenda.
-4. Si la invalidación falla, la API debe tratarlo explícitamente. Ese caso se analiza en la sección 11.
+1. La API ejecuta la mutación en PostgreSQL dentro de una transacción.
+2. Los triggers de `Cita`, `Bloqueo` y `HorarioAtencion` incrementan `AgendaVersion` del profesional afectado.
+3. Si el COMMIT es exitoso, llama a `InvalidateAgenda(ctx, clínica, profesional)` para publicar un epoch nuevo.
+4. La próxima consulta encuentra un epoch nuevo o una `AgendaVersion` distinta y recalcula la agenda.
+5. Si la invalidación del epoch falla, `AgendaVersion` sigue actuando como segunda barrera: el snapshot cacheado se descarta al no coincidir con la versión autoritativa.
 
 ---
 
@@ -70,14 +83,14 @@ El paquete no conoce HTTP, PostgreSQL ni Keycloak. Recibe un `LoaderFunc` que ca
 
 ```text
 {prefix}:avail:{format}:epoch:{clinicaId}:{profesionalId}
-{prefix}:avail:{format}:data:{clinicaId}:{profesionalId}:{servicioId}:{fecha}:{epoch}
+{prefix}:avail:{format}:data:{clinicaId}:{profesionalId}:{servicioId}:{fecha}:{pasoMinutos}:{epoch}
 ```
 
 Con la configuración por defecto:
 
 ```text
-medicitas:avail:v1:epoch:clinica-norte:prof-0001
-medicitas:avail:v1:data:clinica-norte:prof-0001:serv-001:2026-11-10:3f2a9c...e1
+medicitas:avail:v2:epoch:clinica-norte:prof-0001
+medicitas:avail:v2:data:clinica-norte:prof-0001:serv-001:2026-11-10:30:3f2a9c...e1
 ```
 
 ### Por qué cada segmento
@@ -86,14 +99,15 @@ medicitas:avail:v1:data:clinica-norte:prof-0001:serv-001:2026-11-10:3f2a9c...e1
 |---|---|
 | `medicitas` | Namespace del proyecto dentro de una instancia Redis compartida |
 | `avail` | Separar la caché de disponibilidad de otros usos futuros |
-| `v1` | Versión del formato de claves; permite convivencia durante una migración |
+| `v2` | Versión del formato de claves; incluye `pasoMinutos` porque distintas rejillas generan espacios distintos |
 | `clinicaId` | Aislamiento por tenant (I5). La clínica viene del contexto autenticado |
 | `profesionalId` | La agenda y el epoch se manejan por profesional |
 | `servicioId` | La duración del servicio determina los espacios disponibles (RF7) |
 | `fecha` | Fecha local de la clínica, en formato estricto `YYYY-MM-DD` |
+| `pasoMinutos` | Rejilla de inicios; un mismo servicio y fecha con pasos distintos no comparten snapshot |
 | `epoch` | Barrera de invalidación; una entrada vieja queda inalcanzable |
 
-El alcance de una entrada es **una combinación de clínica, profesional, servicio y fecha, bajo un epoch**. Una reserva publica un epoch nuevo para todo el profesional, por lo que invalida **todas sus fechas y servicios**. Es una invalidación conservadora: puede reducir la tasa de aciertos, pero evita tener que enumerar claves o mantener un índice de entradas.
+El alcance de una entrada es **una combinación de clínica, profesional, servicio, fecha, paso y epoch**. Una reserva publica un epoch nuevo para todo el profesional, por lo que invalida **todas sus fechas, servicios y pasos**. Es una invalidación conservadora: puede reducir la tasa de aciertos, pero evita tener que enumerar claves o mantener un índice de entradas.
 
 ### Validación
 
@@ -110,14 +124,14 @@ Estas reglas evitan colisiones por concatenación, claves ambiguas y valores ine
 
 Hay dos versiones independientes:
 
-- la versión de **claves** (`v1` en el prefijo) permite cambiar la estructura de claves sin leer datos incompatibles;
-- `SnapshotSchemaVersion` (`1` en el valor) permite cambiar la estructura del JSON. Un valor con otra versión se considera inválido, se recalcula y se reemplaza.
+- la versión de **claves** (`v2` en el prefijo) permite cambiar la estructura de claves sin leer datos incompatibles; `v2` agrega `pasoMinutos` a la clave de datos;
+- `SnapshotSchemaVersion` (`3` en el valor) permite cambiar la estructura del JSON. Un valor con otra versión se considera inválido, se recalcula y se reemplaza. `v3` agrega `AgendaVersion`.
 
 ---
 
-## 3. Invalidación mediante epochs
+## 3. Doble barrera: epochs + `AgendaVersion`
 
-### Mecanismo
+### Epochs
 
 Cada agenda `(clínica, profesional)` tiene un token llamado **epoch**:
 
@@ -139,6 +153,16 @@ Después: epoch = E2
 ```
 
 Las claves huérfanas se eliminan solas cuando vence su TTL de datos.
+
+### `AgendaVersion` en PostgreSQL
+
+El esquema incluye la tabla `AgendaVersion (clinicaId, profesionalId, version)`, mantenida por triggers sobre `HorarioAtencion`, `Bloqueo` y `Cita`. Cada cambio relevante en la agenda incrementa la versión del profesional afectado.
+
+El `Snapshot` v3 guarda la versión observada al momento de calcular. En un cache hit, `GetOrLoad` consulta la versión autoritativa y solo sirve el snapshot si coinciden. Esto actúa como una **segunda barrera de invalidación** independiente de Redis:
+
+- si `InvalidateAgenda` falla y el epoch antiguo sigue vigente, el snapshot cacheado se descarta porque su `AgendaVersion` ya no coincide;
+- si Redis conserva un snapshot huérfano bajo un epoch que se regeneró, la versión lo detecta;
+- si un snapshot antiguo sin `AgendaVersion` (schema v2 o menor) aparece en Redis, se recalcula.
 
 ### Por qué no solo `DEL`
 
@@ -176,9 +200,9 @@ Un contador incremental parece más simple, pero tiene un problema: si el epoch 
 **No garantiza:**
 
 - que una lectura ya en curso termine con datos nuevos;
-- que el `SET` no falle;
+- que el `SET` del epoch no falle (aunque `AgendaVersion` mitiga el riesgo de servir datos obsoletos);
 - que un lector que ya obtuvo el epoch viejo no escriba bajo ese epoch (la escritura queda inalcanzable, pero ocupa memoria hasta el TTL);
-- que PostgreSQL y Redis estén coordinados sin una política de integración.
+- consistencia estricta bajo particiones de red prolongadas sin intervención operativa.
 
 ---
 
@@ -196,10 +220,13 @@ Secuencia:
 2. Obtiene el epoch vigente con `currentEpoch`.
 3. Construye la clave de datos.
 4. Lee Redis con un timeout de operación.
-5. Si el valor existe y es válido, devuelve `Hit: true`.
-6. Si el valor existe pero es inválido, recalcula, intenta reemplazarlo y devuelve `CacheErr` con `ErrInvalidPayload`.
-7. Si no existe, recalcula, guarda y devuelve `Hit: false`.
-8. Si Redis falla, recalcula y devuelve `Hit: false` con `ErrCacheRead` o `ErrCacheWrite` en `CacheErr`.
+5. Si el valor existe y es un `Snapshot` v3, consulta `AgendaVersion` en PostgreSQL.
+6. Si la versión coincide, devuelve `Hit: true`.
+7. Si el valor existe pero es inválido o la versión difiere, recalcula, intenta reemplazarlo y devuelve `CacheErr` con `ErrInvalidPayload`.
+8. Si no existe, recalcula, guarda y devuelve `Hit: false`.
+9. Si Redis falla, recalcula y devuelve `Hit: false` con `ErrCacheRead` o `ErrCacheWrite` en `CacheErr`.
+
+Cuando se recalcula, `GetOrLoad` lee `AgendaVersion` antes y después del `Loader`. Si cambia durante el cálculo, devuelve el snapshot con `ErrStaleSnapshot` (el handler RF7 responde HTTP 503 en ese caso).
 
 | Situación | `Hit` | `CacheErr` | ¿Se guarda? |
 |---|---|---|---|
@@ -258,13 +285,15 @@ La caché normaliza los instantes a UTC y valida el snapshot contra el `Request`
 
 | Campo | Uso |
 |---|---|
-| `SchemaVersion` | Versión del JSON |
+| `SchemaVersion` | Versión del JSON (`3`) |
 | `ClinicaID` | Validar tenant |
 | `ProfesionalID` | Validar agenda |
 | `ServicioID` | Validar servicio |
 | `Fecha` | Validar fecha |
 | `ZonaHoraria` | Zona de la clínica usada para calcular |
 | `DuracionMinutos` | Duración del servicio |
+| `PasoMinutos` | Rejilla de inicios usada |
+| `AgendaVersion` | Versión autoritativa de PostgreSQL; validación en HIT |
 | `Espacios` | Lista de intervalos disponibles |
 | `GeneradoEn` | Momento de generación; trazabilidad y diagnóstico |
 
@@ -277,8 +306,8 @@ La caché normaliza los instantes a UTC y valida el snapshot contra el `Request`
 | Campo | Valor inicial | Motivo | ¿Se puede cambiar? |
 |---|---|---|---|
 | `Prefix` | `medicitas` | Namespace | Sí, por despliegue |
-| `FormatVersion` | `v1` | Versión de claves | Solo con migración coordinada |
-| `DataTTL` | `5m` | Acota datos huérfanos y limita la ventana si una invalidación falla | Sí; afecta frescura y tasa de aciertos |
+| `FormatVersion` | `v2` | Versión de claves (incluye `pasoMinutos`) | Solo con migración coordinada |
+| `DataTTL` | `5m` | Acota datos huérfanos y limita la ventana residual si fallan epoch y `AgendaVersion` | Sí; afecta frescura y tasa de aciertos |
 | `EpochTTL` | `24h` | El epoch debe sobrevivir al TTL de datos | Sí; debe ser mayor que `DataTTL` |
 | `OpTimeout` | `100ms` | Acota cada operación de Redis | Sí; ajustar según latencia observada |
 
@@ -301,7 +330,16 @@ La caché normaliza los instantes a UTC y valida el snapshot contra el `Request`
 
 `NewRedisStore` no hace `Ping` automáticamente. La decisión de arrancar, degradar o fallar si Redis no responde queda en la capa de integración.
 
-La configuración todavía no se lee de variables de entorno. El `docker-compose.yml` ya define `REDIS_HOST` y `REDIS_PORT` para la API, pero el cableado corresponde a la integración futura.
+La configuración se puede leer de variables de entorno (`REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`) o pasarse explícitamente al construir `RedisStore`. Ver [`api/availability_cache.go`](../api/availability_cache.go) para el cableado actual.
+
+### Migraciones requeridas
+
+La caché asume que PostgreSQL tiene aplicadas las migraciones:
+
+- [`db/migrations/01_schema.sql`](../db/migrations/01_schema.sql): tablas base, índices y triggers de `Cita`.
+- [`db/migrations/02_agenda_version.sql`](../db/migrations/02_agenda_version.sql): tabla `AgendaVersion`, funciones `app.incrementarAgendaVersion*`, triggers que mantienen la versión al cambiar `Profesional`, `ProfesionalServicio`, `Servicio`, `HorarioAtencion`, `Bloqueo` y `Cita`.
+
+Sin la migración 02, `availabilityversion.PostgresResolver` no encuentra la tabla y cada HIT se descarta, forzando recálculos continuos.
 
 ---
 
@@ -317,16 +355,18 @@ La configuración todavía no se lee de variables de entorno. El `docker-compose
 | Payload inválido | El valor no es confiable | `ErrInvalidPayload` | Sí; se recalcula y se intenta reemplazar |
 | Datos de otra clínica | Se rechaza el valor | `ErrInvalidPayload` | Sí; nunca se sirve |
 | `Loader` con error | No hay respuesta de disponibilidad | Error del `Loader` | No; se propaga |
+| `AgendaVersion` cambia durante el cálculo | El snapshot puede ser inconsistente | `ErrStaleSnapshot` | Sí; el handler responde 503 |
 
 Puntos importantes:
 
 - **Las lecturas son fail-open hacia PostgreSQL.** Si Redis no responde, la consulta sigue siendo correcta, solo más lenta.
 - **La invalidación es fail-explicit.** No se oculta: si no se pudo publicar el epoch, el llamador recibe `ErrCacheInvalidation` y debe decidir.
+- **`AgendaVersion` mitiga fallos de invalidación.** Incluso si el epoch no se publicó, un snapshot obsoleto se descarta al no coincidir con la versión autoritativa.
 - **Un valor inválido nunca se sirve.** Se recalcula y se reemplaza.
 - **Un fallo del `Loader` no se tapa con datos viejos.** La caché no devuelve una entrada anterior si el cálculo actual falla; el error se propaga.
-- Los errores se pueden inspeccionar con `errors.Is` (`ErrCacheRead`, `ErrCacheWrite`, `ErrCacheInvalidation`, `ErrInvalidPayload`).
+- Los errores se pueden inspeccionar con `errors.Is` (`ErrCacheRead`, `ErrCacheWrite`, `ErrCacheInvalidation`, `ErrInvalidPayload`, `ErrStaleSnapshot`).
 
-No hay circuit breaker ni métricas integradas. `CacheErr` y `ErrCacheInvalidation` existen para que la API los registre y decida.
+No hay circuit breaker ni métricas integradas. `CacheErr`, `ErrCacheInvalidation` y `ErrStaleSnapshot` existen para que la API los registre y decida.
 
 ---
 
@@ -374,29 +414,39 @@ go test ./...
 go test -race ./...
 ```
 
-Pruebas de integración (requieren Redis accesible en DB 15):
+Pruebas de integración (requieren PostgreSQL y Redis; las de API usan DB 15):
 
 ```bash
-docker compose up -d redis          # desde la raíz del repositorio
+docker compose up -d db redis       # desde la raíz del repositorio
 cd api
+DB_HOST=localhost DB_PORT=5432 DB_USER=medicitas DB_PASSWORD=cambiar_en_local DB_NAME=medicitas \
 REDIS_ADDR=localhost:6379 REDIS_DB=15 \
-  go test -tags=integration ./internal/availabilitycache
+  go test -tags=integration ./...
 ```
 
 En PowerShell:
 
 ```powershell
-docker compose up -d redis
+docker compose up -d db redis
 cd api
-$env:REDIS_ADDR = "localhost:6379"
-$env:REDIS_DB = "15"
-go test -tags=integration ./internal/availabilitycache
+$env:DB_HOST = "localhost"; $env:DB_PORT = "5432"; $env:DB_USER = "medicitas"
+$env:DB_PASSWORD = "cambiar_en_local"; $env:DB_NAME = "medicitas"
+$env:REDIS_ADDR = "localhost:6379"; $env:REDIS_DB = "15"
+go test -tags=integration ./...
 ```
 
 Con detector de carreras:
 
 ```bash
-go test -race -tags=integration ./internal/availabilitycache
+go test -race -tags=integration ./...
+```
+
+Benchmark comparativo (PostgreSQL directo vs Redis HIT, incluyendo `AgendaVersion`):
+
+```bash
+DB_HOST=localhost DB_PORT=5432 DB_USER=medicitas DB_PASSWORD=cambiar_en_local DB_NAME=medicitas \
+REDIS_ADDR=localhost:6379 REDIS_DB=15 \
+  go test -tags=integration -run '^$' -bench '^BenchmarkRF7' -benchmem -count=5 .
 ```
 
 La última verificación se ejecutó dentro de contenedores `golang:1.25` porque el entorno de desarrollo no tenía Go instalado en el host.
@@ -473,33 +523,35 @@ Las pruebas `TestRedisStore_*` requieren Redis y tienen el build tag `integratio
 | `TestCacheIntegration_WriteFailureDoesNotCorruptState` | Fallo de escritura e invalidación sobre Redis real |
 | `TestCacheIntegration_ReadFailureFallsBackToLoader` | Redis inaccesible con fallback al `Loader` |
 
-En total hay **43 funciones de prueba**, de las cuales **11 son de integración**. La última verificación incluyó:
+#### Integración RF7 con Redis, PostgreSQL y API real
 
-```text
-go test ./...                                             → ok
-go test -tags=integration -count=5 ./internal/...          → ok
-go test -race -tags=integration -count=1 ./internal/...    → ok
-gofmt -l internal/availabilitycache                         → sin salida
-go vet ./...                                                → sin observaciones
-```
+| Prueba | Qué demuestra |
+|---|---|
+| `TestIntegrationRF7Cache_MissThenHit` | Primera consulta calcula desde PostgreSQL; segunda devuelve HIT |
+| `TestIntegrationRF7Cache_AgendaChangeInvalidatesHit` | Un bloqueo incrementa `AgendaVersion` y fuerza recálculo |
+| `TestIntegrationRF7Cache_CitaReservadaInvalidaSnapshot` | Una cita reservada invalida el snapshot cacheado vía `AgendaVersion` |
+| `TestIntegrationRF7Cache_ClinicIsolation` | Cambios en una clínica no invalidan el HIT de otra |
+| `TestIntegrationRF7Cache_FallbackWhenRedisUnavailable` | Si Redis falla, RF7 sigue sirviendo desde PostgreSQL |
+| `TestIntegrationRF7Cache_ConcurrentRequests` | 10 consultas concurrentes responden correctamente |
+
+En total hay **~50 funciones de prueba** en el área de caché/disponibilidad, de las cuales **17 son de integración**. La última verificación ejecutada fue el benchmark `BenchmarkRF7_*`; las pruebas unitarias y de integración previas quedaron aprobadas en etapas anteriores.
 
 El detector de carreras encontró, durante el desarrollo, una mutación del slice devuelto por el `Loader`; se corrigió copiando la lista antes de normalizarla. Esa corrección está cubierta por `TestCache_DoesNotMutateLoaderSnapshot`.
 
 ### Lo que todavía no prueban
 
-- La prueba E2E “consultar → reservar → consultar” contra la API y PostgreSQL.
+- La prueba E2E “consultar → reservar → consultar” a través del endpoint de reserva (RF9–RF11) cuando esté implementado; la cita se inserta directamente por SQL en la prueba actual.
 - La reserva concurrente real con una sola ganadora (corresponde al módulo de transacciones).
-- El comportamiento de RF7 con horarios, bloqueos y citas reales.
-- La latencia y la tasa de aciertos antes/después (medición de la Etapa 2).
-- El manejo HTTP de `ErrCacheInvalidation`.
+- El manejo HTTP de `ErrCacheInvalidation` con una política explícita (reintento, métrica o estado de advertencia).
+- Métricas de tasa de aciertos en producción bajo carga real; el benchmark muestra acierto controlado en laboratorio.
 
 ---
 
-## 9. Integración futura
+## 9. Integración con la API
 
-### Implementar el `Loader` de RF7
+### `Loader` de RF7
 
-El `Loader` debe calcular, para una clínica, profesional, servicio y fecha:
+El `Loader` ya está implementado en [`api/availability_loader.go`](../api/availability_loader.go). Calcula, para una clínica, profesional, servicio y fecha:
 
 1. el horario de atención activo del profesional para ese día;
 2. los bloqueos que se superponen;
@@ -507,15 +559,15 @@ El `Loader` debe calcular, para una clínica, profesional, servicio y fecha:
 4. la duración del servicio;
 5. los espacios libres resultantes, en la zona horaria de la clínica.
 
-El cálculo debe leer de PostgreSQL y devolver un `Snapshot` completo. Conviene que la consulta use los índices de agenda y que la fecha se interprete en la zona horaria de la clínica.
+Reutiliza el mismo cálculo que el handler RF7, por lo que no puede divergir de la fuente de verdad.
 
-### Cablear el paquete en la API
+### Cableado actual
 
-- Construir `RedisStore` con `REDIS_HOST`, `REDIS_PORT` y, si corresponde, password.
-- Construir `Cache` con `DefaultConfig()` o una configuración derivada.
-- Decidir si un `Ping` fallido al arrancar impide levantar la API o solo deshabilita la caché. Para el curso, degradar es más defendible que impedir el arranque.
-- Registrar `CacheErr` y `ErrCacheInvalidation` en logs/métricas.
-- No cachear datos de pacientes ni notas clínicas.
+- [`api/availability_cache.go`](../api/availability_cache.go) construye `RedisStore` desde `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` y `REDIS_DB`.
+- Si el `Ping` a Redis falla al arrancar, la API se levanta sin caché y calcula desde PostgreSQL (degradación).
+- [`api/availability.go`](../api/availability.go) consulta `availabilityCache.GetOrLoad` cuando la caché está disponible; de lo contrario usa `loaderDisponibilidad.Load` directamente.
+- El handler responde HTTP 503 cuando `GetOrLoad` detecta un snapshot potencialmente inconsistente (`ErrStaleSnapshot`).
+- No se cachean datos de pacientes ni notas clínicas.
 
 ### Puntos de invalidación
 
@@ -555,69 +607,110 @@ La clave actual es por fecha. Una consulta de rango puede resolverse llamando a 
 
 | Requisito | Qué cubre el paquete | Qué falta | Evidencia actual |
 |---|---|---|---|
-| **RF7** | Envuelve el cálculo con una política de caché; define el contrato del `Loader`; valida snapshots | Implementar el cálculo SQL, la zona horaria y los índices; exponer el endpoint | Pruebas de la caché, no del cálculo |
-| **I5** | La clínica forma parte de la clave; se rechazan snapshots de otra clínica | Derivar la clínica del token y probar fugas a nivel API | Pruebas de claves y payload |
-| **I7** | Permite liberar el espacio de inmediato publicando un epoch nuevo | Llamar a `InvalidateAgenda` después del COMMIT de cancelar/reprogramar; prueba E2E | Pruebas de invalidación |
-| **I8** | Con invalidación exitosa, las lecturas posteriores no ven datos previos; las escrituras viejas quedan inalcanzables | Política ante COMMIT exitoso + invalidación fallida; prueba integrada “consultar → reservar → consultar” | Pruebas de época y concurrencia, no la prueba del sistema |
+| **RF7** | Cálculo de disponibilidad con índices; caché conectada al endpoint; fallback a PostgreSQL | Optimizar el cálculo si escala más allá del dataset de prueba | Pruebas unitarias, de integración y benchmark |
+| **I5** | La clínica forma parte de la clave; se rechazan snapshots de otra clínica; token deriva el tenant | — | Pruebas de claves, payload y aislamiento entre clínicas |
+| **I7** | Los triggers incrementan `AgendaVersion`; `InvalidateAgenda` publica epoch nuevo | Llamar a `InvalidateAgenda` desde los handlers de cancelar/reprogramar cuando existan | Pruebas de invalidación y cambio de agenda |
+| **I8** | `AgendaVersion` valida cada HIT; una cita reservada invalida el snapshot cacheado | Política completa ante COMMIT exitoso + invalidación fallida; prueba E2E con endpoint de reserva | Prueba `TestIntegrationRF7Cache_CitaReservadaInvalidaSnapshot` y benchmark |
 
-La consigna exige una prueba automatizada que reserve y vuelva a consultar. Esa prueba **todavía no existe** porque requiere RF7, el endpoint de reserva y PostgreSQL. El paquete aporta el mecanismo, no la demostración completa del invariante.
-
-Tampoco se midió todavía la diferencia de latencia antes y después de la caché; corresponde a la comparación sencilla que pide la consigna.
+La prueba automatizada “consultar → reservar → consultar” existe insertando la cita por SQL. Cuando RF9–RF11 expongan endpoints de reserva/cancelar/reprogramar, la misma secuencia deberá ejecutarse por la API.
 
 ---
 
-## 11. I8: COMMIT exitoso con invalidación fallida
+## 11. I8: COMMIT exitoso con invalidación de epoch fallida
 
 ### El escenario
 
 ```text
 1. La API consulta disponibilidad: el horario 10:00 aparece libre.
 2. Un recepcionista reserva el horario 10:00.
-3. PostgreSQL confirma la reserva (COMMIT exitoso).
+3. PostgreSQL confirma la reserva (COMMIT exitoso); AgendaVersion incrementa.
 4. La API llama a InvalidateAgenda.
-5. Redis no responde o el SET falla.
+5. Redis no responde o el SET del epoch falla.
 6. El epoch anterior sigue vigente.
-7. Otra consulta lee la entrada vieja y vuelve a mostrar el horario como libre.
-8. El error se descubre recién cuando expira el TTL de datos.
+7. Otra consulta lee el snapshot viejo, pero su AgendaVersion ya no coincide.
+8. GetOrLoad descarta el snapshot y recalcula desde PostgreSQL.
 ```
 
-Este caso **no está resuelto** por el diseño actual. Ni los epochs, ni los reintentos, ni el TTL lo resuelven por sí solos:
+### Mitigación actual
 
-- **Los epochs** solo funcionan si el `SET` se publica. Si falla, no hay barrera nueva.
-- **Los reintentos** reducen la probabilidad de un fallo transitorio, pero no garantizan la publicación. Un Redis caído, una partición de red o un timeout pueden agotar los intentos.
-- **El TTL** acota la ventana, pero no la elimina. Durante ese tiempo la disponibilidad puede contradecir a la base, que es exactamente lo que I8 prohíbe. Además, una lectura lenta podría volver a escribir datos viejos y reiniciar la ventana.
+La tabla `AgendaVersion` y el `Snapshot` v3 reducen drásticamente la ventana de inconsistencia:
 
-La consecuencia práctica es una ventana en la que la API puede mostrar un horario ya reservado. La restricción de unicidad y la transacción de PostgreSQL impiden la doble reserva, pero la respuesta de disponibilidad sigue siendo incorrecta.
+- Los triggers de `Cita`, `Bloqueo` y `HorarioAtencion` incrementan `AgendaVersion` dentro de la misma transacción que la mutación.
+- Un cache hit obliga a comparar la versión del snapshot con la versión autoritativa.
+- Si el epoch no se publicó, el snapshot se descarta y se recalcula.
+- El TTL sigue siendo una red de seguridad residual para snapshots que, por alguna razón, no lleven `AgendaVersion` (schema v2 o menor) o para ventanas en las que el resolver también falle.
 
-### Alternativas consideradas
+### Limitaciones que quedan
 
-| Alternativa | Ventajas | Costos | ¿Resuelve el fallo? |
-|---|---|---|---|
-| **Invalidación síncrona post-COMMIT + reintentos + TTL** | Simple; no cambia el esquema; usa lo ya implementado; cubre el camino normal | Ventana residual si el `SET` falla; requiere política de error y observabilidad | **No por completo** |
-| **Outbox transaccional en PostgreSQL** | El evento de invalidación se guarda en la misma transacción que la reserva; un worker lo publica con reintentos; sobrevive caídas | Requiere tabla, worker y operación adicional; la publicación es eventual, no instantánea | Sí, de forma eventual; no garantiza inmediatez estricta |
-| **Versión de agenda en PostgreSQL** | La lectura compara la versión del snapshot con la versión confirmada y descarta datos viejos; no depende de que Redis escriba | Requiere columna/versión, cambios de consulta y un campo en el snapshot; costo extra por lectura | Sí, con cambios de esquema |
-| **Escritura directa del snapshot nuevo después del COMMIT** | Evita el primer fallo de caché y puede mejorar la latencia | Si la escritura falla, el problema persiste; hay que recalcular disponibilidad tras reservar | No por sí sola |
-| **Sin caché para disponibilidad** | I8 se cumple trivialmente | Se pierde el objetivo de rendimiento y el módulo de la consigna | Sí, pero no es aceptable para el proyecto |
-| **Bypass local de la caché tras un fallo** | Fácil de añadir; la instancia que detectó el fallo deja de servir caché | No coordina otras instancias; no es una garantía global | Solo parcialmente |
+- **El resolver puede fallar.** Si PostgreSQL no responde al consultar `AgendaVersion` durante un HIT, `GetOrLoad` descarta el snapshot y recalcula. Esto es seguro, pero anula el beneficio de rendimiento de la caché.
+- **El snapshot obsoleto puede reescribirse.** Un lector lento que obtuvo el epoch viejo antes de la reserva podría escribir bajo ese epoch y reiniciar el TTL. `AgendaVersion` evita servirlo, pero ocupa memoria hasta expirar.
+- **No hay reintentos automáticos de `InvalidateAgenda`.** El handler de reserva recibe `ErrCacheInvalidation` y debe decidir; hoy no hay política definida.
+- **No se midió la ventana real bajo fallo.** El benchmark mide el camino feliz; no se inyectó una caída de Redis durante `InvalidateAgenda`.
 
-### Decisión pendiente con el equipo
+### Decisiones operativas pendientes
 
-Para el alcance del curso, la opción más razonable es:
+1. Invalidar **después del COMMIT** y antes de responder éxito.
+2. Reintentar un número acotado de veces ante errores transitorios de Redis.
+3. Si aun así falla, **no ignorarlo**: registrar el evento, exponer una métrica y definir si la API responde error o un estado explícito.
+4. Mantener el TTL como red de seguridad residual, nunca como garantía.
+5. Completar la prueba E2E “consultar → reservar → consultar” por endpoint cuando RF9–RF11 estén implementados.
 
-1. invalidar **después del COMMIT** y antes de responder éxito;
-2. reintentar un número acotado de veces ante errores transitorios;
-3. si aun así falla, **no ignorarlo**: registrar el evento, exponer una métrica y definir con el equipo si la API responde error o un estado explícito de “reserva confirmada, disponibilidad pendiente”;
-4. mantener el TTL como red de seguridad, nunca como garantía;
-5. agregar la prueba E2E “consultar → reservar → consultar” cuando existan RF7 y el endpoint de reserva.
-
-Si el profesor exige I8 también bajo fallos de Redis, hay que elegir entre **outbox transaccional** y **versión de agenda en PostgreSQL**. Ambas requieren cambios de esquema y deben coordinarse con el responsable de la base antes de implementarlas. Hasta entonces, **no se debe afirmar que I8 está completamente cumplido**.
+Si se requiere I8 también bajo fallos simultáneos de Redis y del resolver de `AgendaVersion`, habría que evaluar un **outbox transaccional** o un **bypass global de caché** hasta recuperar Redis. Eso queda fuera del alcance actual.
 
 ---
 
-## 12. Referencias
+## 12. Benchmark comparativo
+
+### Metodología
+
+El benchmark [`api/availability_rf7_bench_test.go`](../api/availability_rf7_bench_test.go) compara dos rutas bajo las mismas condiciones:
+
+- **DirectPG:** `loaderDisponibilidad.Load` ejecuta las consultas de RF7 en PostgreSQL y luego se consulta `AgendaVersion`.
+- **RedisHit:** `availabilityCache.GetOrLoad` lee el snapshot de Redis y valida la versión contra `AgendaVersion` en PostgreSQL.
+
+Ambos usan los mismos fixtures: una clínica, un profesional, un servicio de 30 minutos, un horario de 09:00 a 13:00 y una fecha futura. Antes de medir RedisHit se precalienta la caché con un MISS + HIT para garantizar que el benchmark mida lecturas de caché válidas.
+
+Se ejecutó con `-count=5` en un contenedor `golang:1.25` contra los contenedores `medicitas-pg-stage5b` y `medicitas-redis-it` del entorno de desarrollo.
+
+### Resultados
+
+```text
+BenchmarkRF7_DirectPG-12     1059    1092725 ns/op    11247 B/op    218 allocs/op
+BenchmarkRF7_DirectPG-12     1021    1090046 ns/op    11247 B/op    218 allocs/op
+BenchmarkRF7_DirectPG-12      980    1095800 ns/op    11248 B/op    218 allocs/op
+BenchmarkRF7_DirectPG-12      993    1086482 ns/op    11248 B/op    218 allocs/op
+BenchmarkRF7_DirectPG-12     1110    1188632 ns/op    11249 B/op    218 allocs/op
+
+BenchmarkRF7_RedisHit-12     3829     331282 ns/op     5771 B/op     74 allocs/op
+BenchmarkRF7_RedisHit-12     3852     326975 ns/op     5770 B/op     74 allocs/op
+BenchmarkRF7_RedisHit-12     4348     354577 ns/op     5770 B/op     74 allocs/op
+BenchmarkRF7_RedisHit-12     3670     313327 ns/op     5770 B/op     74 allocs/op
+BenchmarkRF7_RedisHit-12     3772     309720 ns/op     5773 B/op     74 allocs/op
+```
+
+| Métrica | DirectPG | RedisHit | Diferencia |
+|---|---|---|---|
+| Latencia mediana | ~1.09 ms | ~0.33 ms | RedisHit ≈ 3.3× más rápido |
+| Memoria por operación | ~11.2 KiB | ~5.7 KiB | RedisHit ≈ 49 % menos |
+| Asignaciones por operación | 218 | 74 | RedisHit ≈ 66 % menos |
+
+### Interpretación y limitaciones
+
+- La mejora se debe a evitar las tres consultas SQL de RF7 (horarios, bloqueos, citas) y los joins a `Clinica`.
+- La validación de `AgendaVersion` añade una consulta SQL incluso en HIT; sin ella RedisHit sería aún más rápido, pero se perdería la segunda barrera de consistencia.
+- Las mediciones son de laboratorio con una base casi vacía excepto por los fixtures del benchmark. En producción, con más carga en PostgreSQL y Redis, la diferencia relativa puede ser mayor o menor.
+- No se midió MISS, invalidación concurrente ni degradación bajo Redis caído.
+- El entorno de contenedores comparte CPU con el host; los tiempos absolutos varían según la máquina.
+
+## 13. Referencias
 
 - Enunciado: [`spec.md`](../spec.md) — RF7, RF8, I7, I8 y criterios de aceptación.
 - Código: [`api/internal/availabilitycache/`](../api/internal/availabilitycache/).
+- Loader RF7: [`api/availability_loader.go`](../api/availability_loader.go).
+- Integración API: [`api/availability.go`](../api/availability.go), [`api/availability_cache.go`](../api/availability_cache.go).
+- Resolver `AgendaVersion`: [`api/internal/availabilityversion/postgres.go`](../api/internal/availabilityversion/postgres.go).
+- Pruebas de integración: [`api/availability_rf7_cache_integration_test.go`](../api/availability_rf7_cache_integration_test.go).
+- Benchmark: [`api/availability_rf7_bench_test.go`](../api/availability_rf7_bench_test.go).
 - Modelo de datos: [`docs/modelo-datos.md`](modelo-datos.md).
 - Multi-tenancy: [`docs/multi-tenancy.md`](multi-tenancy.md).
 - Esquema SQL: [`db/migrations/01_schema.sql`](../db/migrations/01_schema.sql).

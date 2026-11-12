@@ -22,7 +22,7 @@ import (
 )
 
 // agendaVersionDB abre una conexión directa a PostgreSQL.
-func agendaVersionDB(t *testing.T) *sql.DB {
+func agendaVersionDB(t testing.TB) *sql.DB {
 	t.Helper()
 	host := envOr("DB_HOST", "localhost")
 	port := envOr("DB_PORT", "5432")
@@ -56,7 +56,7 @@ func versionDeAgenda(t *testing.T, db *sql.DB, clinicaID, profesionalID string) 
 
 // fixturesAgendaVersion crea una clínica mínima con profesional, servicio y
 // asociación. Devuelve los IDs generados.
-func fixturesAgendaVersion(t *testing.T, db *sql.DB) (clinicaID, profesionalID, servicioID, usuarioID string) {
+func fixturesAgendaVersion(t testing.TB, db *sql.DB) (clinicaID, profesionalID, servicioID, usuarioID string) {
 	t.Helper()
 	sufNum := time.Now().UnixNano()
 	ident := fmt.Sprintf("clinica-%d", sufNum)
@@ -111,7 +111,7 @@ type testExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-func mustExec(ctx context.Context, t *testing.T, db testExecer, query string, args ...any) {
+func mustExec(ctx context.Context, t testing.TB, db testExecer, query string, args ...any) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		t.Fatalf("%s: %v", query, err)
@@ -133,7 +133,7 @@ func proximoLunesLocal() (time.Time, int) {
 
 // fixtureHorarioYPaciente crea un horario de atención de 09:00 a 12:00 en el
 // próximo lunes y un paciente, para poder insertar citas válidas.
-func fixtureHorarioYPaciente(t *testing.T, db *sql.DB, clinicaID, profesionalID string) (citaBase time.Time, pacienteID string) {
+func fixtureHorarioYPaciente(t testing.TB, db *sql.DB, clinicaID, profesionalID string) (citaBase time.Time, pacienteID string) {
 	t.Helper()
 	ctx := context.Background()
 	pacienteID = newTestUUID()

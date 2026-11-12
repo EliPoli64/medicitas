@@ -7,9 +7,9 @@ package main
 // caché y la API sigue funcionando), pero no tolerante a una configuración
 // inválida (un puerto mal escrito es un error de despliegue y debe corregirse).
 //
-// Los handlers de RF7/RF8 todavía no usan esta caché. En una etapa posterior
-// consultarán `availabilityCache`; si es nil, deberán calcular desde
-// PostgreSQL directamente.
+// Los handlers de RF7 consultan `availabilityCache` cuando está disponible;
+// si es nil (por ejemplo, porque Redis no respondió al arranque), calculan
+// desde PostgreSQL directamente.
 
 import (
 	"context"
