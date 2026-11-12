@@ -55,6 +55,10 @@ type ServiceStore interface {
 	UpdateServicio(ctx context.Context, clinicaIdent, id string, nombre *string, duracion *int) (Service, error)
 	// SetServicioActivo hace la baja lógica del catálogo.
 	SetServicioActivo(ctx context.Context, clinicaIdent, id string, activo bool) (Service, error)
+	// ProfesionalesDelServicio devuelve los IDs de profesionales de la clínica
+	// que tienen el servicio habilitado. Se usa para invalidar la caché cuando
+	// cambian la duración o el estado de un servicio.
+	ProfesionalesDelServicio(ctx context.Context, clinicaIdent, servicioID string) ([]string, error)
 	ListEspecialidades(ctx context.Context) ([]Especialidad, error)
 }
 
@@ -204,6 +208,30 @@ RETURNING s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::tex
 	return svc, nil
 }
 
+func (s *pgServiceStore) ProfesionalesDelServicio(ctx context.Context, clinicaIdent, servicioID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT ps."profesionalId"::text
+FROM "ProfesionalServicio" ps
+JOIN "Clinica" c ON c."id" = ps."clinicaId"
+WHERE c."identificador" = $1 AND ps."servicioId" = $2`,
+		clinicaIdent, servicioID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listar profesionales del servicio: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("leer profesional del servicio: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *pgServiceStore) ListEspecialidades(ctx context.Context) ([]Especialidad, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT "id"::text, "codigo", "nombre", "activo"
@@ -332,11 +360,27 @@ func updateServicio(c *gin.Context) {
 	id := c.Param("id")
 	var updated Service
 	var err error
+	// Solo la duración y el estado (activo) alteran los espacios ofrecidos.
+	afectaDisponibilidad := false
+
 	if req.Nombre != nil || req.DuracionMinutos != nil {
 		updated, err = serviceStore.UpdateServicio(c.Request.Context(), clinica, id, req.Nombre, req.DuracionMinutos)
+		if err == nil && req.DuracionMinutos != nil {
+			afectaDisponibilidad = true
+		}
 	}
 	if err == nil && req.Activo != nil {
 		updated, err = serviceStore.SetServicioActivo(c.Request.Context(), clinica, id, *req.Activo)
+		if err == nil {
+			afectaDisponibilidad = true
+		}
+	}
+	// Si UpdateServicio confirmó un cambio de disponibilidad y SetServicioActivo
+	// falló después, el COMMIT parcial ya modificó la base; invalidamos igual.
+	// Usamos el id del path porque SetServicioActivo puede devolver un Service
+	// vacío al fallar.
+	if err != nil && afectaDisponibilidad {
+		invalidarAgendasPorServicio(c.Request.Context(), clinica, id)
 	}
 	switch {
 	case errors.Is(err, errServicioFueraDeClinica):
@@ -348,6 +392,9 @@ func updateServicio(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar el servicio"})
 	default:
+		if afectaDisponibilidad {
+			invalidarAgendasPorServicio(c.Request.Context(), clinica, id)
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"clinicaIdentificador": clinica,
 			"servicio":             updated,

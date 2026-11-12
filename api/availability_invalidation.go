@@ -46,3 +46,22 @@ func registrarFalloInvalidacion(err error) {
 		log.Printf("cache: no se pudo invalidar la disponibilidad: %v", err)
 	}
 }
+
+// invalidarAgendasPorServicio publica un epoch nuevo para cada profesional
+// habilitado para el servicio en la clínica. Si falla la consulta de
+// asociaciones o una invalidación individual, se registra pero no se altera la
+// respuesta HTTP.
+func invalidarAgendasPorServicio(ctx context.Context, clinica, servicioID string) {
+	if availabilityCache == nil || serviceStore == nil {
+		return
+	}
+
+	profesionales, err := serviceStore.ProfesionalesDelServicio(ctx, clinica, servicioID)
+	if err != nil {
+		log.Printf("cache: no se pudieron listar profesionales del servicio %s/%s: %v", clinica, servicioID, err)
+		return
+	}
+	for _, pid := range profesionales {
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(ctx, clinica, pid))
+	}
+}

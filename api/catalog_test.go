@@ -64,6 +64,9 @@ type fakeServiceStore struct {
 	list      []Service
 	updated   Service
 	updateErr error
+	setActivoErr error
+	profesionalesPorServicio map[string][]string
+	profesionalesErr         error
 	gotClinica string
 }
 
@@ -98,10 +101,21 @@ func (f *fakeServiceStore) UpdateServicio(_ context.Context, clinicaIdent, _ str
 
 func (f *fakeServiceStore) SetServicioActivo(_ context.Context, clinicaIdent, _ string, _ bool) (Service, error) {
 	f.gotClinica = clinicaIdent
+	if f.setActivoErr != nil {
+		return Service{}, f.setActivoErr
+	}
 	if f.updateErr != nil {
 		return Service{}, f.updateErr
 	}
 	return f.updated, nil
+}
+
+func (f *fakeServiceStore) ProfesionalesDelServicio(_ context.Context, clinicaIdent, servicioID string) ([]string, error) {
+	f.gotClinica = clinicaIdent
+	if f.profesionalesErr != nil {
+		return nil, f.profesionalesErr
+	}
+	return f.profesionalesPorServicio[servicioID], nil
 }
 
 func (f *fakeServiceStore) ListEspecialidades(_ context.Context) ([]Especialidad, error) {

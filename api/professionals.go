@@ -430,6 +430,8 @@ func setProfesionalServicios(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron actualizar los servicios"})
 	default:
+		// El reemplazo de servicios habilitados ya está confirmado.
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, c.Param("id")))
 		c.JSON(http.StatusOK, gin.H{
 			"clinicaIdentificador": clinica,
 			"servicios":            svcs,
@@ -464,6 +466,8 @@ func updateProfesional(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar el profesional"})
 	default:
+		// El cambio de estado del profesional ya está confirmado.
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, c.Param("id")))
 		c.JSON(http.StatusOK, gin.H{
 			"clinicaIdentificador": clinica,
 			"profesional":          p,
