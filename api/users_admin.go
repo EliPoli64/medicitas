@@ -42,8 +42,8 @@ var rolesAsignables = map[string]bool{
 }
 
 var (
-	errUsuarioFueraDeClinica = errors.New("usuario no encontrado en la clínica")
-	errRolNoAsignable        = errors.New("rol no asignable desde una clínica")
+	errUsuarioFueraDeClinica   = errors.New("usuario no encontrado en la clínica")
+	errRolNoAsignable          = errors.New("rol no asignable desde una clínica")
 	errRolConflictoProfesional = errors.New("el usuario está registrado como profesional activo; desactívelo antes de cambiar su rol")
 )
 

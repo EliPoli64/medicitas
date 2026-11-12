@@ -38,12 +38,12 @@ type Especialidad struct {
 
 // Service es la proyección de "Servicio".
 type Service struct {
-	ID               string `json:"id"`
-	Nombre           string `json:"nombre"`
-	DuracionMinutos  int    `json:"duracionMinutos"`
-	EspecialidadID   string `json:"especialidadId"`
+	ID                 string `json:"id"`
+	Nombre             string `json:"nombre"`
+	DuracionMinutos    int    `json:"duracionMinutos"`
+	EspecialidadID     string `json:"especialidadId"`
 	EspecialidadNombre string `json:"especialidadNombre"`
-	Activo           bool   `json:"activo"`
+	Activo             bool   `json:"activo"`
 }
 
 // ServiceStore abstrae la persistencia para tests sin Postgres.

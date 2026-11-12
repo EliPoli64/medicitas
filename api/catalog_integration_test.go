@@ -53,7 +53,7 @@ func TestIntegrationRF2aRF4Catalogo(t *testing.T) {
 		t.Fatalf("alta usuario = %d body=%s", code, raw)
 	}
 	var alta struct {
-		ClinicaIdentificador string   `json:"clinicaIdentificador"`
+		ClinicaIdentificador string    `json:"clinicaIdentificador"`
 		Usuario              AdminUser `json:"usuario"`
 	}
 	if err := json.Unmarshal([]byte(raw), &alta); err != nil {

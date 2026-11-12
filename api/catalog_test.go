@@ -17,12 +17,12 @@ import (
 // --- Fakes de stores ---
 
 type fakeUserAdminStore struct {
-	created  []struct{ clinica, idpSub, rol string }
-	list     []AdminUser
-	target   AdminUser
-	targetErr error
-	updated  AdminUser
-	updateErr error
+	created    []struct{ clinica, idpSub, rol string }
+	list       []AdminUser
+	target     AdminUser
+	targetErr  error
+	updated    AdminUser
+	updateErr  error
 	gotClinica string
 	gotID      string
 }
@@ -60,10 +60,14 @@ func (f *fakeUserAdminStore) UpdateUsuario(_ context.Context, clinicaIdent, id s
 }
 
 type fakeServiceStore struct {
-	created   []struct{ clinica, nombre string; duracion int; espID string }
-	list      []Service
-	updated   Service
-	updateErr error
+	created []struct {
+		clinica, nombre string
+		duracion        int
+		espID           string
+	}
+	list       []Service
+	updated    Service
+	updateErr  error
 	gotClinica string
 }
 
@@ -112,12 +116,12 @@ func (f *fakeServiceStore) ListEspecialidades(_ context.Context) ([]Especialidad
 }
 
 type fakeProfessionalStore struct {
-	created   []struct{ clinica, usuarioID, espID string }
-	list      []Professional
-	setSvcs   []string
+	created    []struct{ clinica, usuarioID, espID string }
+	list       []Professional
+	setSvcs    []string
 	setSvcsOut []ProfessionalService
-	targetErr error
-	updateErr error
+	targetErr  error
+	updateErr  error
 	gotClinica string
 }
 
@@ -264,9 +268,9 @@ func TestCreateUsuarioValidacion400(t *testing.T) {
 	r := setupCatalogoTestEnv(t, srv.URL, ua, nil, nil, idp, admClinicaUser())
 
 	for nombre, body := range map[string]string{
-		"password corta": `{"username":"adm-x","password":"corto","rol":"recepcion"}`,
+		"password corta":    `{"username":"adm-x","password":"corto","rol":"recepcion"}`,
 		"username inválido": `{"username":"a b","password":"secret123","rol":"recepcion"}`,
-		"rol inexistente": `{"username":"adm-x","password":"secret123","rol":"superadmin"}`,
+		"rol inexistente":   `{"username":"adm-x","password":"secret123","rol":"superadmin"}`,
 	} {
 		t.Run(nombre, func(t *testing.T) {
 			code, _ := doJSON(t, r, http.MethodPost, "/usuarios", mintAdm(t, tk), body)
@@ -408,7 +412,7 @@ func TestUpdateUsuarioCompensaRolSiFallaBD(t *testing.T) {
 	defer srv.Close()
 
 	ua := &fakeUserAdminStore{
-		target:   AdminUser{ID: "u1", IdpSub: "sub-1", RolCodigo: "recepcion", Activo: true},
+		target:    AdminUser{ID: "u1", IdpSub: "sub-1", RolCodigo: "recepcion", Activo: true},
 		updateErr: errors.New("boom"),
 	}
 	idp := &fakeIdentityAdmin{}
@@ -470,10 +474,10 @@ func TestCreateServicioValidacion400(t *testing.T) {
 	r := setupCatalogoTestEnv(t, srv.URL, nil, svcs, nil, &fakeIdentityAdmin{}, admClinicaUser())
 
 	for nombre, body := range map[string]string{
-		"sin nombre":      `{"nombre":"","duracionMinutos":30,"especialidadId":"e1"}`,
-		"duración cero":   `{"nombre":"X","duracionMinutos":0,"especialidadId":"e1"}`,
+		"sin nombre":        `{"nombre":"","duracionMinutos":30,"especialidadId":"e1"}`,
+		"duración cero":     `{"nombre":"X","duracionMinutos":0,"especialidadId":"e1"}`,
 		"duración negativa": `{"nombre":"X","duracionMinutos":-5,"especialidadId":"e1"}`,
-		"sin especialidad": `{"nombre":"X","duracionMinutos":30,"especialidadId":""}`,
+		"sin especialidad":  `{"nombre":"X","duracionMinutos":30,"especialidadId":""}`,
 	} {
 		t.Run(nombre, func(t *testing.T) {
 			code, _ := doJSON(t, r, http.MethodPost, "/servicios", mintAdm(t, tk), body)

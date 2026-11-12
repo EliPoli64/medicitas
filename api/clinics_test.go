@@ -48,9 +48,9 @@ type fakeIdentityAdmin struct {
 	delErr  error
 
 	// Rol / estado aplicados a cada sub (para compensación en tests).
-	rolesSet  map[string]string
+	rolesSet   map[string]string
 	enabledSet map[string]bool
-	setErr    error
+	setErr     error
 }
 
 func (f *fakeIdentityAdmin) CreateUser(_ context.Context, u NewIDPUser) (string, error) {
@@ -196,13 +196,13 @@ func TestCreateClinicaZonaDefault(t *testing.T) {
 
 func TestCreateClinicaValidacion400(t *testing.T) {
 	casos := map[string]string{
-		"json malformado":     `{"nombre":`,
-		"nombre vacío":        `{"nombre":"","identificador":"clinica-x","administrador":{"username":"adm-x","password":"secret123"}}`,
+		"json malformado":        `{"nombre":`,
+		"nombre vacío":           `{"nombre":"","identificador":"clinica-x","administrador":{"username":"adm-x","password":"secret123"}}`,
 		"identificador inválido": `{"nombre":"C","identificador":"Clínica Este","administrador":{"username":"adm-x","password":"secret123"}}`,
-		"zona inválida":       `{"nombre":"C","identificador":"clinica-x","zonaHoraria":"Marte/Olympus","administrador":{"username":"adm-x","password":"secret123"}}`,
-		"username inválido":   `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"a b","password":"secret123"}}`,
-		"password corta":      `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"adm-x","password":"corto"}}`,
-		"email inválido":      `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"adm-x","password":"secret123","email":"no-es-correo"}}`,
+		"zona inválida":          `{"nombre":"C","identificador":"clinica-x","zonaHoraria":"Marte/Olympus","administrador":{"username":"adm-x","password":"secret123"}}`,
+		"username inválido":      `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"a b","password":"secret123"}}`,
+		"password corta":         `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"adm-x","password":"corto"}}`,
+		"email inválido":         `{"nombre":"C","identificador":"clinica-x","administrador":{"username":"adm-x","password":"secret123","email":"no-es-correo"}}`,
 	}
 	for nombre, body := range casos {
 		t.Run(nombre, func(t *testing.T) {

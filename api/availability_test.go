@@ -393,10 +393,10 @@ func TestDisponibilidadParametrosInvalidos400(t *testing.T) {
 	r := setupDispoTestEnv(t, srv.URL, dispo, admClinicaUser())
 
 	for nombre, query := range map[string]string{
-		"sin servicioId":  "/profesionales/p1/disponibilidad?fecha=2030-03-11",
-		"sin fecha":       "/profesionales/p1/disponibilidad?servicioId=s1",
-		"fecha inválida":  "/profesionales/p1/disponibilidad?fecha=11-03-2030&servicioId=s1",
-		"paso inválido":   "/profesionales/p1/disponibilidad?fecha=2030-03-11&servicioId=s1&pasoMinutos=3",
+		"sin servicioId":   "/profesionales/p1/disponibilidad?fecha=2030-03-11",
+		"sin fecha":        "/profesionales/p1/disponibilidad?servicioId=s1",
+		"fecha inválida":   "/profesionales/p1/disponibilidad?fecha=11-03-2030&servicioId=s1",
+		"paso inválido":    "/profesionales/p1/disponibilidad?fecha=2030-03-11&servicioId=s1&pasoMinutos=3",
 		"paso no numérico": "/profesionales/p1/disponibilidad?fecha=2030-03-11&servicioId=s1&pasoMinutos=abc",
 	} {
 		t.Run(nombre, func(t *testing.T) {
