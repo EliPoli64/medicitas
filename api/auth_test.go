@@ -70,7 +70,11 @@ func withTestIssuer(t *testing.T, jwksURL string) {
 }
 
 func (tk *testKeys) mint(issuer string, exp time.Time, withExp bool, roles []string, kid string, clinicaID string) string {
-	claims := jwt.MapClaims{"iss": issuer, "sub": "test-user", "preferred_username": "tester"}
+	return tk.mintWithSub(issuer, exp, withExp, roles, kid, clinicaID, "test-user")
+}
+
+func (tk *testKeys) mintWithSub(issuer string, exp time.Time, withExp bool, roles []string, kid, clinicaID, sub string) string {
+	claims := jwt.MapClaims{"iss": issuer, "sub": sub, "preferred_username": "tester"}
 	if withExp {
 		claims["exp"] = exp.Unix()
 	}
