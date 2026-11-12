@@ -159,6 +159,7 @@ func testRequest() Request {
 		ProfesionalID: "prof-1",
 		ServicioID:    "serv-1",
 		Fecha:         "2026-11-10",
+		PasoMinutos:   30,
 	}
 }
 
@@ -176,6 +177,7 @@ func testSnapshot(req Request, hour int) Snapshot {
 		Fecha:           req.Fecha,
 		ZonaHoraria:     "America/Argentina/Buenos_Aires",
 		DuracionMinutos: 30,
+		PasoMinutos:     req.PasoMinutos,
 		Espacios: []Slot{{
 			Inicio: start,
 			Fin:    start.Add(30 * time.Minute),
@@ -462,6 +464,167 @@ func TestCache_InvalidationCoversAllDatesAndServices(t *testing.T) {
 		if calls[i].Load() != 2 {
 			t.Fatalf("loader calls for request %d = %d, want 2", i, calls[i].Load())
 		}
+	}
+}
+
+// TestCache_DifferentStepsDoNotShareEntries verifica que el paso efectivo
+// forma parte de la identidad de la entrada. Dos consultas idénticas salvo el
+// paso (15 vs 30) deben calcularse y almacenarse por separado.
+func TestCache_DifferentStepsDoNotShareEntries(t *testing.T) {
+	cache, store := newTestCache(t)
+
+	req15 := testRequest()
+	req15.PasoMinutos = 15
+	req30 := testRequest()
+	req30.PasoMinutos = 30
+
+	load15, calls15 := countingLoader(testSnapshot(req15, 9))
+	load30, calls30 := countingLoader(testSnapshot(req30, 10))
+
+	first15, err := cache.GetOrLoad(context.Background(), req15, load15)
+	if err != nil {
+		t.Fatalf("GetOrLoad(step 15) error = %v", err)
+	}
+	if first15.Hit {
+		t.Fatal("step 15 reported a hit on the first query")
+	}
+	assertSlotHour(t, first15.Snapshot, 9)
+
+	first30, err := cache.GetOrLoad(context.Background(), req30, load30)
+	if err != nil {
+		t.Fatalf("GetOrLoad(step 30) error = %v", err)
+	}
+	if first30.Hit {
+		t.Fatal("step 30 reused the entry from step 15")
+	}
+	assertSlotHour(t, first30.Snapshot, 10)
+
+	// Cada paso debe encontrar su propia entrada en la segunda consulta.
+	second15, err := cache.GetOrLoad(context.Background(), req15, load15)
+	if err != nil {
+		t.Fatalf("GetOrLoad(step 15, second) error = %v", err)
+	}
+	if !second15.Hit {
+		t.Fatal("step 15 missed its own entry")
+	}
+	assertSlotHour(t, second15.Snapshot, 9)
+
+	second30, err := cache.GetOrLoad(context.Background(), req30, load30)
+	if err != nil {
+		t.Fatalf("GetOrLoad(step 30, second) error = %v", err)
+	}
+	if !second30.Hit {
+		t.Fatal("step 30 missed its own entry")
+	}
+	assertSlotHour(t, second30.Snapshot, 10)
+
+	if calls15.Load() != 1 || calls30.Load() != 1 {
+		t.Fatalf("loader calls = (%d, %d), want (1, 1)", calls15.Load(), calls30.Load())
+	}
+	if got := store.size(); got != 3 {
+		t.Fatalf("store has %d keys, want 3 (epoch + one data key per step)", got)
+	}
+}
+
+// TestCache_InvalidationCoversAllSteps confirma que el epoch es por agenda y
+// no por paso: invalidar el profesional debe alcanzar todas sus rejillas.
+func TestCache_InvalidationCoversAllSteps(t *testing.T) {
+	cache, _ := newTestCache(t)
+
+	requests := []Request{testRequest(), testRequest()}
+	requests[1].PasoMinutos = 15
+
+	loads := make([]LoaderFunc, len(requests))
+	calls := make([]*atomic.Int32, len(requests))
+	for i, req := range requests {
+		loads[i], calls[i] = countingLoader(testSnapshot(req, 9))
+		if _, err := cache.GetOrLoad(context.Background(), req, loads[i]); err != nil {
+			t.Fatalf("GetOrLoad(step %d) error = %v", req.PasoMinutos, err)
+		}
+		if _, err := cache.GetOrLoad(context.Background(), req, loads[i]); err != nil {
+			t.Fatalf("GetOrLoad(step %d, second) error = %v", req.PasoMinutos, err)
+		}
+		if calls[i].Load() != 1 {
+			t.Fatalf("loader calls for step %d = %d, want 1", req.PasoMinutos, calls[i].Load())
+		}
+	}
+
+	if err := cache.InvalidateAgenda(context.Background(), requests[0].ClinicaID, requests[0].ProfesionalID); err != nil {
+		t.Fatalf("InvalidateAgenda() error = %v", err)
+	}
+
+	for i, req := range requests {
+		result, err := cache.GetOrLoad(context.Background(), req, loads[i])
+		if err != nil {
+			t.Fatalf("GetOrLoad(step %d, after invalidation) error = %v", req.PasoMinutos, err)
+		}
+		if result.Hit {
+			t.Fatalf("step %d served an entry from the old epoch", req.PasoMinutos)
+		}
+		if calls[i].Load() != 2 {
+			t.Fatalf("loader calls for step %d = %d, want 2", req.PasoMinutos, calls[i].Load())
+		}
+	}
+}
+
+func TestCache_RejectsRequestWithoutStep(t *testing.T) {
+	cache, store := newTestCache(t)
+
+	req := testRequest()
+	req.PasoMinutos = 0
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	if _, err := cache.GetOrLoad(context.Background(), req, load); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("GetOrLoad() error = %v, want ErrInvalidRequest", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("loader called %d times, want 0", calls.Load())
+	}
+	if got := store.size(); got != 0 {
+		t.Fatalf("store has %d keys, want 0", got)
+	}
+}
+
+// TestCache_SnapshotStepMismatchIsRejected cubre la defensa en profundidad:
+// aunque la clave ya separa por paso, un payload con otro paso no se sirve.
+func TestCache_SnapshotStepMismatchIsRejected(t *testing.T) {
+	cache, store := newTestCache(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+
+	wrong := testSnapshot(req, 9)
+	wrong.PasoMinutos = 15
+	raw, err := encodeSnapshot(wrong)
+	if err != nil {
+		t.Fatalf("encodeSnapshot() error = %v", err)
+	}
+	store.put(dataKeyFor(t, cache, store, req), raw)
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(mismatch) error = %v", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() served a snapshot with a different step")
+	}
+	if !errors.Is(result.CacheErr, ErrInvalidPayload) {
+		t.Fatalf("CacheErr = %v, want ErrInvalidPayload", result.CacheErr)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls.Load())
+	}
+
+	// El valor inválido debe haber sido reemplazado por uno correcto.
+	third, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(after repair) error = %v", err)
+	}
+	if !third.Hit {
+		t.Fatal("GetOrLoad() missed after the mismatch was repaired")
 	}
 }
 
@@ -820,10 +983,10 @@ func TestCache_DecodesNullSlotsAsEmptyList(t *testing.T) {
 		t.Fatalf("GetOrLoad(first) error = %v", err)
 	}
 
-	raw := `{"schemaVersion":1,"clinicaId":"clinica-a","profesionalId":"prof-1",` +
+	raw := `{"schemaVersion":2,"clinicaId":"clinica-a","profesionalId":"prof-1",` +
 		`"servicioId":"serv-1","fecha":"2026-11-10",` +
 		`"zonaHoraria":"America/Argentina/Buenos_Aires","duracionMinutos":30,` +
-		`"espacios":null,"generadoEn":"2026-11-04T12:00:00Z"}`
+		`"pasoMinutos":30,"espacios":null,"generadoEn":"2026-11-04T12:00:00Z"}`
 	store.put(dataKeyFor(t, cache, store, req), raw)
 
 	result, err := cache.GetOrLoad(context.Background(), req, load)

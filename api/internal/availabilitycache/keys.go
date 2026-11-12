@@ -16,10 +16,15 @@ var (
 // Las claves tienen dos espacios separados:
 //
 //	{prefix}:avail:{format}:epoch:{clinicaId}:{profesionalId}
-//	{prefix}:avail:{format}:data:{clinicaId}:{profesionalId}:{servicioId}:{fecha}:{epoch}
+//	{prefix}:avail:{format}:data:{clinicaId}:{profesionalId}:{servicioId}:{fecha}:{pasoMinutos}:{epoch}
 //
 // El epoch es un token opaco. La clave de datos lo incluye para que una
 // invalidación pueda dejar inalcanzables las entradas anteriores sin borrarlas.
+//
+// El paso de la rejilla (pasoMinutos) forma parte de la clave de datos porque
+// dos pasos distintos producen conjuntos de espacios distintos. En cambio, NO
+// forma parte de la clave de epoch: la invalidación es por agenda
+// (clínica+profesional) y debe alcanzar todos los pasos, fechas y servicios.
 type keyBuilder struct {
 	prefix        string
 	formatVersion string
@@ -61,13 +66,14 @@ func (b keyBuilder) dataKey(req Request, epoch string) (string, error) {
 	}
 
 	return fmt.Sprintf(
-		"%s:avail:%s:data:%s:%s:%s:%s:%s",
+		"%s:avail:%s:data:%s:%s:%s:%s:%d:%s",
 		b.prefix,
 		b.formatVersion,
 		req.ClinicaID,
 		req.ProfesionalID,
 		req.ServicioID,
 		req.Fecha,
+		req.PasoMinutos,
 		epoch,
 	), nil
 }
@@ -84,6 +90,12 @@ func validateRequest(req Request) error {
 	}
 	if err := validateDate(req.Fecha); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	// El paso efectivo debe venir resuelto por el llamador. Un cero o un
+	// negativo no identifican una rejilla válida y producirían claves
+	// ambiguas; se rechaza en vez de asumir un default.
+	if req.PasoMinutos <= 0 {
+		return fmt.Errorf("%w: step minutes must be positive", ErrInvalidRequest)
 	}
 	return nil
 }

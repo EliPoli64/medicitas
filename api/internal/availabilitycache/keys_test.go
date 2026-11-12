@@ -2,6 +2,7 @@ package availabilitycache
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +18,7 @@ func TestKeyBuilder_DataKey(t *testing.T) {
 		ProfesionalID: "prof-1",
 		ServicioID:    "serv-1",
 		Fecha:         "2026-11-10",
+		PasoMinutos:   30,
 	}
 	epoch := "0123456789abcdef0123456789abcdef"
 
@@ -25,9 +27,70 @@ func TestKeyBuilder_DataKey(t *testing.T) {
 		t.Fatalf("dataKey() error = %v", err)
 	}
 
-	want := "medicitas:avail:v1:data:clinica-a:prof-1:serv-1:2026-11-10:" + epoch
+	want := "medicitas:avail:v2:data:clinica-a:prof-1:serv-1:2026-11-10:30:" + epoch
 	if got != want {
 		t.Fatalf("dataKey() = %q, want %q", got, want)
+	}
+}
+
+// TestKeyBuilder_DataKeyIncludesStep verifica que el paso efectivo separa las
+// entradas. Sin este segmento, una consulta con paso 15 reutilizaría el
+// resultado calculado con paso 30.
+func TestKeyBuilder_DataKeyIncludesStep(t *testing.T) {
+	builder, err := newKeyBuilder(DefaultConfig())
+	if err != nil {
+		t.Fatalf("newKeyBuilder() error = %v", err)
+	}
+	epoch := "0123456789abcdef0123456789abcdef"
+
+	req15 := Request{
+		ClinicaID:     "clinica-a",
+		ProfesionalID: "prof-1",
+		ServicioID:    "serv-1",
+		Fecha:         "2026-11-10",
+		PasoMinutos:   15,
+	}
+	req30 := req15
+	req30.PasoMinutos = 30
+
+	key15, err := builder.dataKey(req15, epoch)
+	if err != nil {
+		t.Fatalf("dataKey(step 15) error = %v", err)
+	}
+	key30, err := builder.dataKey(req30, epoch)
+	if err != nil {
+		t.Fatalf("dataKey(step 30) error = %v", err)
+	}
+
+	if key15 == key30 {
+		t.Fatal("data keys with different steps must not collide")
+	}
+	if !strings.Contains(key15, ":2026-11-10:15:") {
+		t.Fatalf("dataKey(step 15) = %q, want the step segment", key15)
+	}
+	if !strings.Contains(key30, ":2026-11-10:30:") {
+		t.Fatalf("dataKey(step 30) = %q, want the step segment", key30)
+	}
+}
+
+func TestKeyBuilder_RejectsInvalidStep(t *testing.T) {
+	builder, err := newKeyBuilder(DefaultConfig())
+	if err != nil {
+		t.Fatalf("newKeyBuilder() error = %v", err)
+	}
+	epoch := "0123456789abcdef0123456789abcdef"
+
+	for _, step := range []int{0, -5} {
+		req := Request{
+			ClinicaID:     "clinica-a",
+			ProfesionalID: "prof-1",
+			ServicioID:    "serv-1",
+			Fecha:         "2026-11-10",
+			PasoMinutos:   step,
+		}
+		if _, err := builder.dataKey(req, epoch); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("dataKey(step %d) error = %v, want ErrInvalidRequest", step, err)
+		}
 	}
 }
 
@@ -42,7 +105,7 @@ func TestKeyBuilder_EpochKey(t *testing.T) {
 		t.Fatalf("epochKey() error = %v", err)
 	}
 
-	want := "medicitas:avail:v1:epoch:clinica-a:prof-1"
+	want := "medicitas:avail:v2:epoch:clinica-a:prof-1"
 	if got != want {
 		t.Fatalf("epochKey() = %q, want %q", got, want)
 	}
@@ -60,6 +123,7 @@ func TestKeyBuilder_TenantIsolation(t *testing.T) {
 		ProfesionalID: "prof-1",
 		ServicioID:    "serv-1",
 		Fecha:         "2026-11-10",
+		PasoMinutos:   30,
 	}
 	reqB := reqA
 	reqB.ClinicaID = "clinica-b"
@@ -92,6 +156,7 @@ func TestKeyBuilder_RejectsInvalidDate(t *testing.T) {
 				ProfesionalID: "prof-1",
 				ServicioID:    "serv-1",
 				Fecha:         date,
+				PasoMinutos:   30,
 			}
 			if _, err := builder.dataKey(req, epoch); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("dataKey() error = %v, want ErrInvalidRequest", err)
@@ -115,6 +180,7 @@ func TestKeyBuilder_RejectsInvalidIDs(t *testing.T) {
 				ProfesionalID: "prof-1",
 				ServicioID:    "serv-1",
 				Fecha:         "2026-11-10",
+				PasoMinutos:   30,
 			}
 			if _, err := builder.dataKey(req, epoch); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("dataKey() error = %v, want ErrInvalidRequest", err)
@@ -133,6 +199,7 @@ func TestKeyBuilder_RejectsInvalidEpoch(t *testing.T) {
 		ProfesionalID: "prof-1",
 		ServicioID:    "serv-1",
 		Fecha:         "2026-11-10",
+		PasoMinutos:   30,
 	}
 
 	invalidEpochs := []string{"", "short", "0123456789ABCDEF0123456789ABCDEF"}

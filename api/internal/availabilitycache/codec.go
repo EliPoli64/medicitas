@@ -83,6 +83,14 @@ func validateSnapshot(snapshot Snapshot, req Request) error {
 	if snapshot.DuracionMinutos <= 0 {
 		return fmt.Errorf("%w: duration must be positive", ErrInvalidPayload)
 	}
+	if snapshot.PasoMinutos <= 0 {
+		return fmt.Errorf("%w: step minutes must be positive", ErrInvalidPayload)
+	}
+	// La clave ya separa por paso, pero el valor también lo declara. Esto
+	// detecta un payload manipulado, mezclado o generado con otra rejilla.
+	if snapshot.PasoMinutos != req.PasoMinutos {
+		return fmt.Errorf("%w: step minutes does not match request", ErrInvalidPayload)
+	}
 	for i, slot := range snapshot.Espacios {
 		if slot.Inicio.IsZero() || slot.Fin.IsZero() {
 			return fmt.Errorf("%w: slot %d has a zero time", ErrInvalidPayload, i)

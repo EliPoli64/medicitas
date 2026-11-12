@@ -5,10 +5,15 @@ import "time"
 const (
 	// SnapshotSchemaVersion identifica el formato del valor guardado en Redis.
 	// Debe incrementarse si cambia la estructura de Snapshot.
-	SnapshotSchemaVersion = 1
+	//
+	// v2 agrega PasoMinutos al Snapshot. Un valor v1 se considera inválido y se
+	// recalcula, porque no permite comprobar con qué rejilla se generó.
+	SnapshotSchemaVersion = 2
 
-	DefaultPrefix        = "medicitas"
-	DefaultFormatVersion = "v1"
+	DefaultPrefix = "medicitas"
+	// DefaultFormatVersion versiona el layout de las claves. v2 agrega el paso
+	// efectivo a la clave de datos; las claves v1 quedan inalcanzables.
+	DefaultFormatVersion = "v2"
 	DefaultDataTTL       = 5 * time.Minute
 	DefaultEpochTTL      = 24 * time.Hour
 	DefaultOpTimeout     = 100 * time.Millisecond
@@ -19,11 +24,17 @@ const (
 // ClinicaID debe provenir del contexto autenticado, nunca de un parámetro
 // libre enviado por el cliente. Fecha es una fecha local de la clínica en
 // formato YYYY-MM-DD.
+//
+// PasoMinutos es el paso efectivo de la rejilla de espacios (RF7). Debe venir
+// ya resuelto por la capa que conoce el contrato HTTP, incluido su valor por
+// defecto; la caché no inventa un default. Forma parte de la identidad de la
+// entrada porque dos pasos distintos producen espacios distintos.
 type Request struct {
 	ClinicaID     string
 	ProfesionalID string
 	ServicioID    string
 	Fecha         string
+	PasoMinutos   int
 }
 
 // Slot representa un intervalo de tiempo disponible.
@@ -45,6 +56,7 @@ type Snapshot struct {
 	Fecha           string    `json:"fecha"`
 	ZonaHoraria     string    `json:"zonaHoraria"`
 	DuracionMinutos int       `json:"duracionMinutos"`
+	PasoMinutos     int       `json:"pasoMinutos"`
 	Espacios        []Slot    `json:"espacios"`
 	GeneradoEn      time.Time `json:"generadoEn"`
 }
