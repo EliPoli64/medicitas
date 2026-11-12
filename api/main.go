@@ -164,6 +164,21 @@ func main() {
 	blockStore = newPGBlockStore(db)
 	agendaStore = newPGAgendaStore(db)
 	statsStore = newPGStatsStore(db)
+
+	// Caché de disponibilidad (RF7/RF8). Todavía no se usa en los handlers.
+	// Una configuración inválida es fatal; una caída de Redis solo deshabilita
+	// la caché y la API sigue sirviendo desde PostgreSQL.
+	if cacheRuntime, err := newAvailabilityCacheFromEnv(context.Background()); err != nil {
+		if isAvailabilityCacheConfigError(err) {
+			log.Fatalf("redis: configuración inválida: %v", err)
+		}
+		log.Printf("redis: caché de disponibilidad deshabilitada: %v", err)
+	} else {
+		availabilityCache = cacheRuntime.Cache
+		defer cacheRuntime.Close()
+		log.Printf("redis: caché de disponibilidad habilitada en %s (db %d)", cacheRuntime.Addr, cacheRuntime.DB)
+	}
+
 	identityAdmin = newHTTPIdentityAdminFromEnv()
 	if err := setupRouter().Run(":" + port); err != nil {
 		panic(err)
