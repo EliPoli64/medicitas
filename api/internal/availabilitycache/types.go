@@ -8,7 +8,11 @@ const (
 	//
 	// v2 agrega PasoMinutos al Snapshot. Un valor v1 se considera inválido y se
 	// recalcula, porque no permite comprobar con qué rejilla se generó.
-	SnapshotSchemaVersion = 2
+	//
+	// v3 agrega AgendaVersion: la versión autoritativa de la agenda en
+	// PostgreSQL al momento de calcular el Snapshot. Un Snapshot anterior sin
+	// este campo se considera no verificable y se recalcula.
+	SnapshotSchemaVersion = 3
 
 	DefaultPrefix = "medicitas"
 	// DefaultFormatVersion versiona el layout de las claves. v2 agrega el paso
@@ -57,6 +61,7 @@ type Snapshot struct {
 	ZonaHoraria     string    `json:"zonaHoraria"`
 	DuracionMinutos int       `json:"duracionMinutos"`
 	PasoMinutos     int       `json:"pasoMinutos"`
+	AgendaVersion   int64     `json:"agendaVersion"`
 	Espacios        []Slot    `json:"espacios"`
 	GeneradoEn      time.Time `json:"generadoEn"`
 }

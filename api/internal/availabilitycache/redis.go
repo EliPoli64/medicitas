@@ -93,6 +93,27 @@ func (s *RedisStore) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Cleanup elimina todas las claves que coinciden con pattern. Está pensado
+// para aislar pruebas de integración sin usar FLUSHDB.
+func (s *RedisStore) Cleanup(ctx context.Context, pattern string) error {
+	var cursor uint64
+	for {
+		batch, next, err := s.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis scan %q: %w", pattern, err)
+		}
+		if len(batch) > 0 {
+			if err := s.client.Del(ctx, batch...).Err(); err != nil {
+				return fmt.Errorf("redis del: %w", err)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+	}
+}
+
 // Close libera el pool de conexiones.
 func (s *RedisStore) Close() error {
 	return s.client.Close()

@@ -29,3 +29,15 @@ type Store interface {
 // posterior. La caché solo se encarga de decidir si usa el valor guardado o
 // si debe invocar al Loader.
 type LoaderFunc func(ctx context.Context, req Request) (Snapshot, error)
+
+// AgendaVersionResolver consulta la versión autoritativa de una agenda.
+//
+// La implementación concreta pertenece a la capa de infraestructura (por
+// ejemplo, PostgreSQL). availabilitycache usa este contrato para mantenerse
+// independiente de la base de datos relacional; los tests pueden proveer un
+// fake.
+type AgendaVersionResolver interface {
+	// Resolve devuelve la versión actual de la agenda para el profesional en
+	// la clínica. Si la fila no existe, devuelve 0 y nil.
+	Resolve(ctx context.Context, clinicaID, profesionalID string) (int64, error)
+}

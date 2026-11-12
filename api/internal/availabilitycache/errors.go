@@ -30,4 +30,8 @@ var (
 	// Es un fallo que el llamador debe tratar explícitamente: la reserva
 	// puede estar confirmada en PostgreSQL aunque la caché siga vieja.
 	ErrCacheInvalidation = errors.New("availability cache invalidation failed")
+
+	// ErrStaleSnapshot indica que el Snapshot se calculó mientras la agenda
+	// cambiaba de versión. No se almacena ni se sirve como vigente.
+	ErrStaleSnapshot = errors.New("availability snapshot stale")
 )

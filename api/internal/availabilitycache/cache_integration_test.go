@@ -25,7 +25,7 @@ func newIntegrationCache(t *testing.T) (*Cache, *RedisStore, string) {
 	cfg.Prefix = prefix
 	cfg.OpTimeout = 500 * time.Millisecond
 
-	cache, err := NewCache(store, cfg)
+	cache, err := NewCache(store, cfg, WithVersionResolver(nopResolver{}))
 	if err != nil {
 		t.Fatalf("NewCache() error = %v", err)
 	}

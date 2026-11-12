@@ -142,7 +142,11 @@ func assertEpochUnchanged(t *testing.T, store *recordingCacheStore, clinica, pro
 func installAvailabilityCache(t *testing.T, store availabilitycache.Store) *availabilitycache.Cache {
 	t.Helper()
 
-	cache, err := availabilitycache.NewCache(store, availabilitycache.DefaultConfig())
+	cache, err := availabilitycache.NewCache(
+		store,
+		availabilitycache.DefaultConfig(),
+		availabilitycache.WithVersionResolver(nopAgendaVersionResolver{}),
+	)
 	if err != nil {
 		t.Fatalf("NewCache() error = %v", err)
 	}

@@ -142,15 +142,96 @@ func (f *fakeStore) calls() (getCalls, setCalls, setNXWins int) {
 	return f.getCalls, f.setCalls, f.setNXWins
 }
 
+type fakeResolver struct {
+	mu       sync.Mutex
+	versions map[string]int64
+	sequence []int64
+	seqIdx   int
+	err      error
+	calls    int
+}
+
+func newFakeResolver() *fakeResolver {
+	return &fakeResolver{versions: make(map[string]int64)}
+}
+
+func (f *fakeResolver) Resolve(_ context.Context, clinicaID, profesionalID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return 0, f.err
+	}
+	if len(f.sequence) > 0 {
+		if f.seqIdx >= len(f.sequence) {
+			return f.sequence[len(f.sequence)-1], nil
+		}
+		v := f.sequence[f.seqIdx]
+		f.seqIdx++
+		return v, nil
+	}
+	return f.versions[clinicaID+":"+profesionalID], nil
+}
+
+func (f *fakeResolver) set(clinicaID, profesionalID string, v int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.versions[clinicaID+":"+profesionalID] = v
+}
+
+func (f *fakeResolver) bump(clinicaID, profesionalID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.versions[clinicaID+":"+profesionalID]++
+}
+
+func (f *fakeResolver) setSequence(seq ...int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sequence = seq
+	f.seqIdx = 0
+}
+
+func (f *fakeResolver) fail(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeResolver) totalCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// nopResolver es un resolver que siempre devuelve versión 0. Permite que
+// las pruebas que no prueban el versionado por agenda sigan haciendo HIT sin
+// depender de PostgreSQL.
+type nopResolver struct{}
+
+func (nopResolver) Resolve(context.Context, string, string) (int64, error) { return 0, nil }
+
 func newTestCache(t *testing.T) (*Cache, *fakeStore) {
 	t.Helper()
 
 	store := newFakeStore()
-	cache, err := NewCache(store, DefaultConfig())
+	cache, err := NewCache(store, DefaultConfig(), WithVersionResolver(nopResolver{}))
 	if err != nil {
 		t.Fatalf("NewCache() error = %v", err)
 	}
 	return cache, store
+}
+
+func newTestCacheWithResolver(t *testing.T) (*Cache, *fakeStore, *fakeResolver) {
+	t.Helper()
+
+	store := newFakeStore()
+	resolver := newFakeResolver()
+	cache, err := NewCache(store, DefaultConfig(), WithVersionResolver(resolver))
+	if err != nil {
+		t.Fatalf("NewCache() error = %v", err)
+	}
+	return cache, store, resolver
 }
 
 func testRequest() Request {
@@ -983,10 +1064,10 @@ func TestCache_DecodesNullSlotsAsEmptyList(t *testing.T) {
 		t.Fatalf("GetOrLoad(first) error = %v", err)
 	}
 
-	raw := `{"schemaVersion":2,"clinicaId":"clinica-a","profesionalId":"prof-1",` +
+	raw := `{"schemaVersion":3,"clinicaId":"clinica-a","profesionalId":"prof-1",` +
 		`"servicioId":"serv-1","fecha":"2026-11-10",` +
 		`"zonaHoraria":"America/Argentina/Buenos_Aires","duracionMinutos":30,` +
-		`"pasoMinutos":30,"espacios":null,"generadoEn":"2026-11-04T12:00:00Z"}`
+		`"pasoMinutos":30,"agendaVersion":0,"espacios":null,"generadoEn":"2026-11-04T12:00:00Z"}`
 	store.put(dataKeyFor(t, cache, store, req), raw)
 
 	result, err := cache.GetOrLoad(context.Background(), req, load)
@@ -1212,5 +1293,305 @@ func TestCache_DoesNotMutateLoaderSnapshot(t *testing.T) {
 	got := original.Espacios[0].Inicio
 	if !got.Equal(originalStart) || got.Location() != loc {
 		t.Fatalf("loader snapshot was mutated: got %v in %v", got, got.Location())
+	}
+}
+
+func TestCache_VersionResolverHitServesWhenVersionMatches(t *testing.T) {
+	cache, store, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+
+	first, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+	if first.Hit {
+		t.Fatal("first GetOrLoad() reported a hit, want a miss")
+	}
+	if first.Snapshot.AgendaVersion != 5 {
+		t.Fatalf("snapshot agenda version = %d, want 5", first.Snapshot.AgendaVersion)
+	}
+
+	second, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(second) error = %v", err)
+	}
+	if !second.Hit {
+		t.Fatal("second GetOrLoad() did not hit the cache")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
+	}
+	if resolver.totalCalls() < 2 {
+		t.Fatalf("resolver calls = %d, want at least 2", resolver.totalCalls())
+	}
+
+	// El snapshot almacenado debe tener la versión 5.
+	dataKey := dataKeyFor(t, cache, store, req)
+	raw := store.mustValue(t, dataKey)
+	stored, err := decodeSnapshot(raw, req)
+	if err != nil {
+		t.Fatalf("decode stored snapshot: %v", err)
+	}
+	if stored.AgendaVersion != 5 {
+		t.Fatalf("stored agenda version = %d, want 5", stored.AgendaVersion)
+	}
+}
+
+func TestCache_VersionResolverHitRecalculatesWhenVersionDiffers(t *testing.T) {
+	cache, _, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls after first = %d, want 1", calls.Load())
+	}
+
+	// La agenda cambia mientras el snapshot anterior sigue en Redis.
+	resolver.bump(req.ClinicaID, req.ProfesionalID)
+
+	second, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(second) error = %v", err)
+	}
+	if second.Hit {
+		t.Fatal("second GetOrLoad() served a stale snapshot")
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls after stale hit = %d, want 2", calls.Load())
+	}
+	if second.Snapshot.AgendaVersion != 6 {
+		t.Fatalf("recalculated snapshot agenda version = %d, want 6", second.Snapshot.AgendaVersion)
+	}
+
+	third, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(third) error = %v", err)
+	}
+	if !third.Hit {
+		t.Fatal("third GetOrLoad() did not hit after recalculation")
+	}
+}
+
+func TestCache_VersionResolverRejectsOldSchemaSnapshot(t *testing.T) {
+	cache, store, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+
+	// Simular un snapshot antiguo (schema v2) que no tiene AgendaVersion.
+	old := testSnapshot(req, 9)
+	old.SchemaVersion = 2
+	raw, err := encodeSnapshot(old)
+	if err != nil {
+		t.Fatalf("encodeSnapshot() error = %v", err)
+	}
+
+	// Forzar la inicialización del epoch escribiendo una entrada válida primero
+	// para poder obtener la clave de datos; luego la reemplazamos.
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(prime) error = %v", err)
+	}
+	key := dataKeyFor(t, cache, store, req)
+	store.put(key, raw)
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() served a snapshot with an old schema")
+	}
+	if !errors.Is(result.CacheErr, ErrInvalidPayload) {
+		t.Fatalf("CacheErr = %v, want ErrInvalidPayload", result.CacheErr)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls.Load())
+	}
+
+	// El snapshot reemplazado debe ser válido y tener la versión actual.
+	next, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad(after repair) error = %v", err)
+	}
+	if !next.Hit {
+		t.Fatal("GetOrLoad() missed after repairing the old schema snapshot")
+	}
+	if next.Snapshot.AgendaVersion != 5 {
+		t.Fatalf("repaired agenda version = %d, want 5", next.Snapshot.AgendaVersion)
+	}
+}
+
+func TestCache_VersionResolverDetectsVersionChangeDuringLoad(t *testing.T) {
+	_, store, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+
+	// La primera lectura de versión devuelve 5; la segunda (después del
+	// loader) devuelve 6.
+	changingResolver := newFakeResolver()
+	changingResolver.setSequence(5, 6)
+
+	cacheWithChanging, err := NewCache(store, DefaultConfig(), WithVersionResolver(changingResolver))
+	if err != nil {
+		t.Fatalf("NewCache() error = %v", err)
+	}
+
+	result, err := cacheWithChanging.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() reported a hit on a stale load")
+	}
+	if !errors.Is(result.CacheErr, ErrStaleSnapshot) {
+		t.Fatalf("CacheErr = %v, want ErrStaleSnapshot", result.CacheErr)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
+	}
+
+	// El snapshot calculado bajo una versión obsoleta no debe quedar cacheado.
+	key := dataKeyFor(t, cacheWithChanging, store, req)
+	if _, err := store.Get(context.Background(), key); !errors.Is(err, ErrMiss) {
+		t.Fatal("stale snapshot was stored in Redis")
+	}
+}
+
+func TestCache_VersionResolverErrorOnHitFallsBackToLoader(t *testing.T) {
+	cache, _, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+	if _, err := cache.GetOrLoad(context.Background(), req, load); err != nil {
+		t.Fatalf("GetOrLoad(first) error = %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls after first = %d, want 1", calls.Load())
+	}
+
+	resolver.fail(errors.New("postgres unavailable"))
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() served a cached snapshot when the resolver failed")
+	}
+	if !errors.Is(result.CacheErr, ErrCacheRead) {
+		t.Fatalf("CacheErr = %v, want ErrCacheRead", result.CacheErr)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("loader calls = %d, want 2", calls.Load())
+	}
+}
+
+func TestCache_VersionResolverErrorOnLoadReturnsCacheErr(t *testing.T) {
+	cache, _, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.fail(errors.New("postgres unavailable"))
+
+	result, err := cache.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v, want a fallback result", err)
+	}
+	if result.Hit {
+		t.Fatal("GetOrLoad() reported a hit")
+	}
+	if !errors.Is(result.CacheErr, ErrCacheRead) {
+		t.Fatalf("CacheErr = %v, want ErrCacheRead", result.CacheErr)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestCache_VersionResolverIsClinicIsolated(t *testing.T) {
+	cache, _, resolver := newTestCacheWithResolver(t)
+
+	reqA := testRequest()
+	reqB := reqA
+	reqB.ClinicaID = "clinica-b"
+
+	resolver.set(reqA.ClinicaID, reqA.ProfesionalID, 5)
+	resolver.set(reqB.ClinicaID, reqB.ProfesionalID, 9)
+
+	loadA, callsA := countingLoader(testSnapshot(reqA, 9))
+	loadB, callsB := countingLoader(testSnapshot(reqB, 10))
+
+	if _, err := cache.GetOrLoad(context.Background(), reqA, loadA); err != nil {
+		t.Fatalf("GetOrLoad(A) error = %v", err)
+	}
+	if _, err := cache.GetOrLoad(context.Background(), reqB, loadB); err != nil {
+		t.Fatalf("GetOrLoad(B) error = %v", err)
+	}
+
+	// Cambiar solo la versión de A no debe invalidar el cache hit de B.
+	resolver.bump(reqA.ClinicaID, reqA.ProfesionalID)
+
+	hitA, err := cache.GetOrLoad(context.Background(), reqA, loadA)
+	if err != nil {
+		t.Fatalf("GetOrLoad(A after bump) error = %v", err)
+	}
+	if hitA.Hit {
+		t.Fatal("GetOrLoad(A) served a stale snapshot after its agenda version changed")
+	}
+	if callsA.Load() != 2 {
+		t.Fatalf("loader calls A = %d, want 2", callsA.Load())
+	}
+
+	hitB, err := cache.GetOrLoad(context.Background(), reqB, loadB)
+	if err != nil {
+		t.Fatalf("GetOrLoad(B after A bump) error = %v", err)
+	}
+	if !hitB.Hit {
+		t.Fatal("GetOrLoad(B) missed even though its agenda version did not change")
+	}
+	if callsB.Load() != 1 {
+		t.Fatalf("loader calls B = %d, want 1", callsB.Load())
+	}
+}
+
+func TestCache_StaleSnapshotNotStored(t *testing.T) {
+	_, store, resolver := newTestCacheWithResolver(t)
+	req := testRequest()
+	load, calls := countingLoader(testSnapshot(req, 9))
+
+	resolver.set(req.ClinicaID, req.ProfesionalID, 5)
+
+	// Resolver devuelve 5 antes del loader y 6 después.
+	changingResolver := newFakeResolver()
+	changingResolver.setSequence(5, 6)
+
+	cacheWithChanging, err := NewCache(store, DefaultConfig(), WithVersionResolver(changingResolver))
+	if err != nil {
+		t.Fatalf("NewCache() error = %v", err)
+	}
+
+	_, err = cacheWithChanging.GetOrLoad(context.Background(), req, load)
+	if err != nil {
+		t.Fatalf("GetOrLoad() error = %v", err)
+	}
+
+	// No debe haberse escrito ninguna clave de datos (el epoch se inicializa).
+	dataKey := dataKeyFor(t, cacheWithChanging, store, req)
+	if _, err := store.Get(context.Background(), dataKey); !errors.Is(err, ErrMiss) {
+		t.Fatal("stale snapshot was stored in Redis")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("loader calls = %d, want 1", calls.Load())
 	}
 }

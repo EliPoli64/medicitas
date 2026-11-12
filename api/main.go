@@ -182,7 +182,7 @@ func main() {
 	// Caché de disponibilidad (RF7/RF8). Todavía no se usa en los handlers.
 	// Una configuración inválida es fatal; una caída de Redis solo deshabilita
 	// la caché y la API sigue sirviendo desde PostgreSQL.
-	if cacheRuntime, err := newAvailabilityCacheFromEnv(context.Background()); err != nil {
+	if cacheRuntime, err := newAvailabilityCacheFromEnv(context.Background(), db); err != nil {
 		if isAvailabilityCacheConfigError(err) {
 			log.Fatalf("redis: configuración inválida: %v", err)
 		}

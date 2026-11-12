@@ -133,7 +133,7 @@ func TestNewAvailabilityCacheFromEnvInvalidConfig(t *testing.T) {
 	t.Setenv("REDIS_PASSWORD", "")
 	t.Setenv("REDIS_DB", "")
 
-	runtime, err := newAvailabilityCacheFromEnv(context.Background())
+	runtime, err := newAvailabilityCacheFromEnv(context.Background(), nil)
 	if err == nil {
 		_ = runtime.Close()
 		t.Fatal("newAvailabilityCacheFromEnv() error = nil")
@@ -154,7 +154,7 @@ func TestNewAvailabilityCacheFromEnvUnreachable(t *testing.T) {
 	t.Setenv("REDIS_DB", "0")
 
 	start := time.Now()
-	runtime, err := newAvailabilityCacheFromEnv(context.Background())
+	runtime, err := newAvailabilityCacheFromEnv(context.Background(), nil)
 	if err == nil {
 		_ = runtime.Close()
 		t.Fatal("newAvailabilityCacheFromEnv() error = nil con Redis inaccesible")

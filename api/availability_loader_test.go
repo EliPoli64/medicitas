@@ -19,6 +19,15 @@ import (
 	"medicitas/api/internal/availabilitycache"
 )
 
+// nopAgendaVersionResolver es un resolver de prueba que siempre devuelve
+// versión 0. Permite que las pruebas de la API que usan la caché sin
+// PostgreSQL sigan obteniendo HIT.
+type nopAgendaVersionResolver struct{}
+
+func (nopAgendaVersionResolver) Resolve(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+
 // baseLoaderStore devuelve un store válido para una consulta que llega hasta
 // el cálculo. Cada prueba ajusta solo lo que necesita.
 func baseLoaderStore() *fakeDispoStore {
@@ -466,7 +475,11 @@ func TestDisponibilidadLoaderIsAcceptedByCache(t *testing.T) {
 	loader := newDisponibilidadLoader(dispo)
 
 	store := &loaderMemStore{values: make(map[string]string)}
-	cache, err := availabilitycache.NewCache(store, availabilitycache.DefaultConfig())
+	cache, err := availabilitycache.NewCache(
+		store,
+		availabilitycache.DefaultConfig(),
+		availabilitycache.WithVersionResolver(nopAgendaVersionResolver{}),
+	)
 	if err != nil {
 		t.Fatalf("NewCache() error = %v", err)
 	}

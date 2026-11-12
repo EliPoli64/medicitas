@@ -44,7 +44,7 @@ func TestNewAvailabilityCacheFromEnvIntegration(t *testing.T) {
 	t.Setenv("REDIS_PASSWORD", os.Getenv("REDIS_PASSWORD"))
 	t.Setenv("REDIS_DB", strconv.Itoa(db))
 
-	runtime, err := newAvailabilityCacheFromEnv(context.Background())
+	runtime, err := newAvailabilityCacheFromEnv(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("newAvailabilityCacheFromEnv() error = %v", err)
 	}

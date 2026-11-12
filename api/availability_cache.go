@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"medicitas/api/internal/availabilitycache"
+	"medicitas/api/internal/availabilityversion"
 )
 
 const (
@@ -113,7 +115,11 @@ func redisConfigFromEnv() (availabilitycache.RedisConfig, error) {
 // Un error de configuración envuelve ErrInvalidConfig. Un error de conexión
 // no: el llamador puede decidir degradar la caché y seguir sirviendo desde
 // PostgreSQL.
-func newAvailabilityCacheFromEnv(ctx context.Context) (*availabilityCacheRuntime, error) {
+//
+// Si db no es nil, se conecta un AgendaVersionResolver sobre PostgreSQL. Eso
+// permite que GetOrLoad valide cada cache hit contra la versión autoritativa
+// de la agenda.
+func newAvailabilityCacheFromEnv(ctx context.Context, db *sql.DB) (*availabilityCacheRuntime, error) {
 	cfg, err := redisConfigFromEnv()
 	if err != nil {
 		return nil, err
@@ -131,7 +137,11 @@ func newAvailabilityCacheFromEnv(ctx context.Context) (*availabilityCacheRuntime
 		return nil, fmt.Errorf("redis no responde en %s: %w", cfg.Addr, err)
 	}
 
-	cache, err := availabilitycache.NewCache(store, availabilitycache.DefaultConfig())
+	cacheOpts := []availabilitycache.CacheOption{}
+	if db != nil {
+		cacheOpts = append(cacheOpts, availabilitycache.WithVersionResolver(availabilityversion.NewPostgresResolver(db)))
+	}
+	cache, err := availabilitycache.NewCache(store, availabilitycache.DefaultConfig(), cacheOpts...)
 	if err != nil {
 		_ = store.Close()
 		return nil, err

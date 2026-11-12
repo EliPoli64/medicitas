@@ -83,7 +83,11 @@ func newIntegrationInvalidationCache(t *testing.T) (*availabilitycache.Cache, *r
 
 	cfg := availabilitycache.DefaultConfig()
 	cfg.Prefix = prefix
-	cache, err := availabilitycache.NewCache(store, cfg)
+	cache, err := availabilitycache.NewCache(
+		store,
+		cfg,
+		availabilitycache.WithVersionResolver(nopAgendaVersionResolver{}),
+	)
 	if err != nil {
 		t.Fatalf("NewCache() error = %v", err)
 	}
