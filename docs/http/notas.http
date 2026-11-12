@@ -1,0 +1,85 @@
+### MediCitas — colección RF15 (nota clínica)
+### Requiere: docker compose up (api :8080, keycloak :6767)
+### Permiso (matriz RF17): SOLO profesional (OpNotaClinica) y solo su propia cita
+### atendida. Dato más sensible del sistema: su lectura/escritura queda en la
+### bitácora (RF18) y el historial RF16 no lo expone.
+### VS Code / JetBrains: extensión REST Client
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### 1) Token del profesional (demo: dra-garcia, clínica-norte)
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password=cambiar_en_local&grant_type=password
+
+### 2) Historial de un paciente para localizar una cita atendida
+# @name paciente
+GET {{host}}/pacientes
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+### 3) Adjuntar nota a una cita atendida propia → 201
+# Solo si la cita está 'atendida' (sino 409) y no tiene nota (sino 409).
+# @name nota
+POST {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "contenido": "Paciente evoluciona favorablemente. Se ajusta tratamiento."
+}
+
+### 4) Leer la nota → 200 (queda registrada la LECTURA en la bitácora)
+GET {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+
+### 5) Contenido vacío → 400
+POST {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{"contenido": "   "}
+
+### 6) Cita inexistente o de otra clínica → 404 (I5)
+POST {{host}}/citas/11111111-1111-1111-1111-111111111111/nota
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{"contenido": "x"}
+
+### --- Matriz y propiedad ---
+
+### 7) Recepción NO toca notas → 403
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+###
+POST {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{"contenido": "x"}
+
+### 8) adm-clinica tampoco → 403 (solo el profesional que atendió)
+# @name tokenAdm
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=adm-norte&password=cambiar_en_local&grant_type=password
+
+###
+POST {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
+Authorization: Bearer {{tokenAdm.response.body.access_token}}
+Content-Type: application/json
+
+{"contenido": "x"}
+
+### 9) Sin token → 401
+GET {{host}}/citas/00000000-0000-0000-0000-000000000000/nota
