@@ -422,6 +422,9 @@ func createHorario(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo crear el horario"})
 	default:
+		// El INSERT ya está confirmado. La invalidación es posterior al
+		// COMMIT y su fallo no cambia la respuesta de la mutación.
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, profesionalID))
 		c.JSON(http.StatusCreated, gin.H{
 			"clinicaIdentificador": clinica,
 			"horario":              h,
@@ -533,6 +536,9 @@ func updateHorario(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar el horario"})
 	default:
+		// El UPDATE ya está confirmado. La invalidación es posterior al
+		// COMMIT y su fallo no cambia la respuesta de la mutación.
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, profesionalID))
 		c.JSON(http.StatusOK, gin.H{
 			"clinicaIdentificador": clinica,
 			"horario":              h,

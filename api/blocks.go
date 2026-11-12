@@ -304,6 +304,12 @@ func createBloqueo(c *gin.Context) {
 	b, conflicts, err := blockStore.CreateBloqueo(
 		c.Request.Context(), clinica, profesionalID, du.UsuarioID, inicio, fin, strings.TrimSpace(req.Motivo),
 	)
+	// CreateBloqueo inserta en autocommit y después lista los conflictos. Si
+	// ese listado falla, la fila ya está confirmada aunque el handler responda
+	// error; la invalidación debe cubrir también ese caso parcial.
+	if b.ID != "" {
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, profesionalID))
+	}
 	switch {
 	case errors.Is(err, errProfesionalAgendaFuera):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -348,6 +354,9 @@ func deleteBloqueo(c *gin.Context) {
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo eliminar el bloqueo"})
 	default:
+		// El DELETE ya está confirmado. La invalidación es posterior al
+		// COMMIT y su fallo no cambia la respuesta de la mutación.
+		registrarFalloInvalidacion(invalidarDisponibilidadDeAgenda(c.Request.Context(), clinica, profesionalID))
 		c.Status(http.StatusNoContent)
 	}
 }
