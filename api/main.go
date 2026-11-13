@@ -114,6 +114,13 @@ func setupRouter() *gin.Engine {
 	r.POST("/profesionales/:id/bloqueos", append(secure(OpHorariosBloqueos), createBloqueo)...)
 	r.DELETE("/bloqueos/:id", append(secure(OpHorariosBloqueos), deleteBloqueo)...)
 
+	// RF9–RF11: reservar / reprogramar / cancelar (adm-clinica, recepcion).
+	r.POST("/citas", append(secure(OpReservarReprogramarCancelar), createCita)...)
+	r.POST("/citas/:id/reprogramar", append(secure(OpReservarReprogramarCancelar), reprogramarCita)...)
+	r.POST("/citas/:id/cancelar", append(secure(OpReservarReprogramarCancelar), cancelarCita)...)
+	// RF12: desenlace atendida|ausente (adm-clinica, recepcion, profesional propio).
+	r.POST("/citas/:id/desenlace", append(secure(OpRegistrarDesenlace), registrarDesenlace)...)
+
 	// RF15: nota clínica (solo el profesional que atendió la cita).
 	r.POST("/citas/:id/nota", append(secure(OpNotaClinica), createNota)...)
 	r.GET("/citas/:id/nota", append(secure(OpNotaClinica), getNota)...)
@@ -175,6 +182,7 @@ func main() {
 	blockStore = newPGBlockStore(db)
 	agendaStore = newPGAgendaStore(db)
 	statsStore = newPGStatsStore(db)
+	appointmentStore = newPGAppointmentStore(db)
 
 	// Stores de notas clínicas y auditoría (RF15, RF18-RF19).
 	notaStore = newPGNotaStore(db)

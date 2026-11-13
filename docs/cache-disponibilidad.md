@@ -540,10 +540,11 @@ El detector de carreras encontró, durante el desarrollo, una mutación del slic
 
 ### Lo que todavía no prueban
 
-- La prueba E2E “consultar → reservar → consultar” a través del endpoint de reserva (RF9–RF11) cuando esté implementado; la cita se inserta directamente por SQL en la prueba actual.
-- La reserva concurrente real con una sola ganadora (corresponde al módulo de transacciones).
+- Cancelar/reprogramar por API (RF10–RF11) y su invalidación asociada.
 - El manejo HTTP de `ErrCacheInvalidation` con una política explícita (reintento, métrica o estado de advertencia).
 - Métricas de tasa de aciertos en producción bajo carga real; el benchmark muestra acierto controlado en laboratorio.
+
+Cubierto por RF9: `TestIntegrationRF9I8ConsultarReservarConsultar` (E2E por API) y `TestIntegrationRF9CarreraUnaGanadora` (una sola ganadora).
 
 ---
 
@@ -609,10 +610,10 @@ La clave actual es por fecha. Una consulta de rango puede resolverse llamando a 
 |---|---|---|---|
 | **RF7** | Cálculo de disponibilidad con índices; caché conectada al endpoint; fallback a PostgreSQL | Optimizar el cálculo si escala más allá del dataset de prueba | Pruebas unitarias, de integración y benchmark |
 | **I5** | La clínica forma parte de la clave; se rechazan snapshots de otra clínica; token deriva el tenant | — | Pruebas de claves, payload y aislamiento entre clínicas |
-| **I7** | Los triggers incrementan `AgendaVersion`; `InvalidateAgenda` publica epoch nuevo | Llamar a `InvalidateAgenda` desde los handlers de cancelar/reprogramar cuando existan | Pruebas de invalidación y cambio de agenda |
-| **I8** | `AgendaVersion` valida cada HIT; una cita reservada invalida el snapshot cacheado | Política completa ante COMMIT exitoso + invalidación fallida; prueba E2E con endpoint de reserva | Prueba `TestIntegrationRF7Cache_CitaReservadaInvalidaSnapshot` y benchmark |
+| **I7** | Los triggers incrementan `AgendaVersion`; `InvalidateAgenda` publica epoch nuevo | Llamar a `InvalidateAgenda` desde cancelar/reprogramar (RF10–RF11) cuando existan | Pruebas de invalidación, RF9 y cambio de agenda |
+| **I8** | `AgendaVersion` valida cada HIT; reserva por API invalida y el espacio desaparece | Política completa ante COMMIT exitoso + invalidación fallida (reintentos/métricas) | `TestIntegrationRF7Cache_CitaReservadaInvalidaSnapshot`, `TestIntegrationRF9I8ConsultarReservarConsultar` |
 
-La prueba automatizada “consultar → reservar → consultar” existe insertando la cita por SQL. Cuando RF9–RF11 expongan endpoints de reserva/cancelar/reprogramar, la misma secuencia deberá ejecutarse por la API.
+E2E “consultar → reservar → consultar” por API: `TestIntegrationRF9I8ConsultarReservarConsultar`. La variante por SQL (`TestIntegrationRF7Cache_CitaReservadaInvalidaSnapshot`) sigue como prueba de `AgendaVersion`.
 
 ---
 
@@ -653,7 +654,7 @@ La tabla `AgendaVersion` y el `Snapshot` v3 reducen drásticamente la ventana de
 2. Reintentar un número acotado de veces ante errores transitorios de Redis.
 3. Si aun así falla, **no ignorarlo**: registrar el evento, exponer una métrica y definir si la API responde error o un estado explícito.
 4. Mantener el TTL como red de seguridad residual, nunca como garantía.
-5. Completar la prueba E2E “consultar → reservar → consultar” por endpoint cuando RF9–RF11 estén implementados.
+5. ~~Completar la prueba E2E “consultar → reservar → consultar” por endpoint~~ — hecho en RF9 (`TestIntegrationRF9I8ConsultarReservarConsultar`). Pendiente equivalente al cancelar/reprogramar.
 
 Si se requiere I8 también bajo fallos simultáneos de Redis y del resolver de `AgendaVersion`, habría que evaluar un **outbox transaccional** o un **bypass global de caché** hasta recuperar Redis. Eso queda fuera del alcance actual.
 

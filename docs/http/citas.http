@@ -1,0 +1,77 @@
+### MediCitas — RF9–RF13 ciclo de la cita
+### Requiere: docker compose up
+### Sustituir ids por valores reales (pacientes / profesionales / servicios)
+
+@host = http://localhost:8080
+@kc = http://localhost:6767
+@realm = medicitas
+@client = api
+
+### Token recepción norte
+# @name tokenRecep
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=recep-norte&password=recep123&grant_type=password
+
+### Disponibilidad (elegir un espacio)
+GET {{host}}/profesionales/{{profesionalId}}/disponibilidad?fecha=2026-11-16&servicioId={{servicioId}}
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+
+### RF9 — Reservar
+# @name reservar
+POST {{host}}/citas?clinicaId=clinica-sur
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "profesionalId": "{{profesionalId}}",
+  "servicioId": "{{servicioId}}",
+  "inicio": "2026-11-16T14:00:00-06:00"
+}
+
+### RF10 — Reprogramar
+POST {{host}}/citas/{{reservar.response.body.cita.id}}/reprogramar
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "inicio": "2026-11-16T15:00:00-06:00"
+}
+
+### RF11 — Cancelar (otra cita)
+POST {{host}}/citas/{{citaIdCancelar}}/cancelar
+Authorization: Bearer {{tokenRecep.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "motivo": "paciente no puede asistir"
+}
+
+### RF12 — Desenlace (cita ya iniciada; adm/recep o profesional propio)
+# @name tokenProf
+POST {{kc}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client}}&username=dra-garcia&password={{$dotenv SEED_USER_PASSWORD}}&grant_type=password
+
+POST {{host}}/citas/{{citaIdDesenlace}}/desenlace
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "estado": "atendida"
+}
+
+### Profesional intentando reservar → 403
+POST {{host}}/citas
+Authorization: Bearer {{tokenProf.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "pacienteId": "{{pacienteId}}",
+  "profesionalId": "{{profesionalId}}",
+  "servicioId": "{{servicioId}}",
+  "inicio": "2026-11-16T16:00:00-06:00"
+}
