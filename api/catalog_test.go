@@ -114,6 +114,17 @@ func (f *fakeServiceStore) SetServicioActivo(_ context.Context, clinicaIdent, _ 
 	return f.updated, nil
 }
 
+func (f *fakeServiceStore) PatchServicio(_ context.Context, clinicaIdent, _ string, _ *string, _ *int, activo *bool) (Service, error) {
+	f.gotClinica = clinicaIdent
+	if f.updateErr != nil {
+		return Service{}, f.updateErr
+	}
+	if activo != nil && f.setActivoErr != nil {
+		return Service{}, f.setActivoErr
+	}
+	return f.updated, nil
+}
+
 func (f *fakeServiceStore) ProfesionalesDelServicio(_ context.Context, clinicaIdent, servicioID string) ([]string, error) {
 	f.gotClinica = clinicaIdent
 	if f.profesionalesErr != nil {

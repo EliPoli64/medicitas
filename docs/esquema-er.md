@@ -262,7 +262,7 @@ erDiagram
 - **Profesional:** debe estar enlazado a un usuario con rol `profesional`; sus servicios deben ser de su misma especialidad.
 - **Nota clínica:** solo se permite en citas `atendida` y la FK compuesta obliga a que la escriba el profesional de la cita.
 - **Auditoría:** `Auditoria` es append-only; los triggers bloquean `UPDATE`, `DELETE` y `TRUNCATE`.
-- **RLS:** segunda estrategia de tenancy, en [`db/migrations/03_rls.sql`](../db/migrations/03_rls.sql). La API entra como `medicitas_app` y fija `app.clinica_id` en la sesión. Detalle: [`docs/rls.md`](rls.md).
+- **RLS:** segunda estrategia de tenancy, en [`db/migrations/03_rls.sql`](../db/migrations/03_rls.sql). La API entra como `medicitas_app`, fija `app.clinica_id` y hace `SET ROLE` al perfil de [`04_db_roles_matrix.sql`](../db/migrations/04_db_roles_matrix.sql). Detalle: [`docs/rls.md`](rls.md).
 
 ## Cómo visualizarlo
 

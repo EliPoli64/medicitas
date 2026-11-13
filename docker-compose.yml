@@ -5,7 +5,8 @@
 #
 # Auth JWT cableada en api (KC_ISSUER_URL / KC_JWKS_URL).
 # RF7 lee Redis cuando está arriba.
-# La API entra como medicitas_app (RLS). Seed y Keycloak siguen como superusuario.
+# La API entra como medicitas_app (RLS) y hace SET ROLE al perfil de la matriz.
+# Seed y Keycloak siguen como superusuario.
 
 services:
   db:

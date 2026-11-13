@@ -181,6 +181,19 @@ func espaciosDelDia(datos DatosAgenda, fecha time.Time, zona *time.Location, dur
 	return espacios
 }
 
+// filtrarEspaciosFuturos descarta intervalos cuyo inicio ya no es futuro.
+// El Snapshot de Redis se calculó con el reloj de ese momento; AgendaVersion
+// no avanza solo porque pasó el tiempo, así que RF7 vuelve a filtrar al responder.
+func filtrarEspaciosFuturos(espacios []Espacio, ahora time.Time) []Espacio {
+	out := make([]Espacio, 0, len(espacios))
+	for _, e := range espacios {
+		if e.Inicio.After(ahora) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // minutosHoraTexto convierte el texto de una columna time ("08:00:00") en
 // minutos desde la medianoche y segundos.
 func minutosHoraTexto(s string) (minutos, segundos int, ok bool) {
@@ -655,6 +668,7 @@ func listDisponibilidadProfesional(c *gin.Context) {
 			HoraLocal: fmt.Sprintf("%02d:%02d", k/60, k%60),
 		}
 	}
+	espacios = filtrarEspaciosFuturos(espacios, nowFn())
 	if espacios == nil {
 		espacios = []Espacio{}
 	}

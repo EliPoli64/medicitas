@@ -55,34 +55,33 @@ VALUES ($1::uuid, $2, 'Paciente norte', '1990-01-01'),
 	if n := scanAs(t, ctx, app, "recepcion", norte, misma, norte); n != 1 {
 		t.Fatalf("RLS norte = %d, want 1", n)
 	}
-	if n := scanAs(t, ctx, app, "", "", `SELECT count(*) FROM "Paciente"`); n != 0 {
+	// Perfil de recepción, pero sin GUC: RLS cierra en vacío (el LOGIN ya no lee "Paciente").
+	if n := scanAs(t, ctx, app, "recepcion", "", `SELECT count(*) FROM "Paciente"`); n != 0 {
 		t.Fatalf("sin GUC se vieron %d pacientes; RLS debe cerrar en vacío", n)
 	}
-	if n := scanAs(t, ctx, app, "adm_plataforma", "", `SELECT count(DISTINCT "clinicaId") FROM "Paciente"`); n < 2 {
+	if n := scanAs(t, ctx, app, "adm_plataforma", "", `SELECT count(*) FROM "Clinica"`); n < 2 {
 		t.Fatalf("adm_plataforma vio %d clínicas, want al menos 2", n)
 	}
 
-	tx, err := app.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `
+	var insertErr error
+	withSQLRole(t, ctx, app, "medicitas_recepcion", func(tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx, `
 SELECT set_config('app.rol', 'recepcion', true),
        set_config('app.clinica_id', $1, true)`, norte); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `
 INSERT INTO "Paciente" ("clinicaId", "identificacion", "nombre", "fechaNacimiento")
 VALUES ($1::uuid, $2, 'Propio', '1992-03-03')`, norte, fmt.Sprintf("propio-%d", suf)); err != nil {
-		t.Fatalf("INSERT en la clínica propia: %v", err)
-	}
-	_, err = tx.ExecContext(ctx, `
+			t.Fatalf("INSERT en la clínica propia: %v", err)
+		}
+		_, insertErr = tx.ExecContext(ctx, `
 INSERT INTO "Paciente" ("clinicaId", "identificacion", "nombre", "fechaNacimiento")
 VALUES ($1::uuid, $2, 'Fuga', '1992-03-03')`, sur, fmt.Sprintf("fuga-%d", suf))
-	_ = tx.Rollback()
+	})
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-		t.Fatalf("INSERT en otra clínica: %v, want 42501", err)
+	if !errors.As(insertErr, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("INSERT en otra clínica: %v, want 42501", insertErr)
 	}
 
 	rlsDur := timeSameCount(t, app, misma, norte, "recepcion", norte)
@@ -130,21 +129,74 @@ func openAppDB(t *testing.T) *sql.DB {
 // rol y clinica vacíos dejan la sesión sin tenant (fallo cerrado).
 func scanAs(t *testing.T, ctx context.Context, db *sql.DB, rol, clinica, query string, args ...any) int {
 	t.Helper()
-	tx, err := db.BeginTx(ctx, nil)
+	var n int
+	role, _ := sqlRoleForCodigo(rol)
+	withSQLRole(t, ctx, db, role, func(tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx, `
+SELECT set_config('app.rol', $1, true),
+       set_config('app.clinica_id', $2, true)`, rol, clinica); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+	})
+	return n
+}
+
+// withSQLRole fija el perfil en la conexión (protocolo simple) y abre una
+// transacción que el caller no confirma: al salir se revierte.
+func withSQLRole(t *testing.T, ctx context.Context, db *sql.DB, role string, fn func(tx *sql.Tx)) {
+	t.Helper()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if role != "" {
+		if err := execSimple(ctx, conn, "SET ROLE "+role); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = execSimple(context.Background(), conn, "RESET ROLE") }()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `
-SELECT set_config('app.rol', $1, true),
-       set_config('app.clinica_id', $2, true)`, rol, clinica); err != nil {
-		t.Fatal(err)
+	fn(tx)
+}
+
+func TestIntegrationPerfilesSQL(t *testing.T) {
+	ctx := context.Background()
+	app := openAppDB(t)
+	t.Cleanup(func() { app.Close() })
+
+	assert42501(t, ctx, app, "medicitas_recepcion", `
+INSERT INTO "Servicio" ("clinicaId", "nombre", "duracionMinutos", "especialidadId")
+VALUES (gen_random_uuid(), 'no', 30, gen_random_uuid())`)
+	assert42501(t, ctx, app, "medicitas_profesional", `SELECT count(*) FROM "Auditoria"`)
+	assert42501(t, ctx, app, "medicitas_recepcion", `DELETE FROM "Auditoria"`)
+	assert42501(t, ctx, app, "medicitas_adm_clinica", `DELETE FROM "Auditoria"`)
+	assert42501(t, ctx, app, "medicitas_adm_plataforma", `SELECT count(*) FROM "Paciente"`)
+
+	withSQLRole(t, ctx, app, "medicitas_adm_clinica", func(tx *sql.Tx) {
+		if _, err := tx.ExecContext(ctx, `SELECT count(*) FROM "Auditoria"`); err != nil {
+			t.Fatalf("adm_clinica debe poder leer la bitácora: %v", err)
+		}
+	})
+}
+
+func assert42501(t *testing.T, ctx context.Context, db *sql.DB, role, query string) {
+	t.Helper()
+	var err error
+	withSQLRole(t, ctx, db, role, func(tx *sql.Tx) {
+		_, err = tx.ExecContext(ctx, query)
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("%s como %s: %v, want 42501", query, role, err)
 	}
-	var n int
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
-		t.Fatalf("%s: %v", query, err)
-	}
-	return n
 }
 
 func timeSameCount(t *testing.T, db *sql.DB, query, clinicaID, rol, gucClinica string) time.Duration {

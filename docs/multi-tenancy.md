@@ -53,7 +53,7 @@ La columna se queda como camino principal porque un solo esquema encaja con Comp
 
 1. Autenticar recepción de `clinica-norte`.
 2. `GET /pacientes?clinicaId=clinica-sur` responde la lista de norte (el parámetro se ignora).
-3. La misma consulta `SELECT count(*) FROM "Paciente" WHERE "clinicaId" = <sur>`, como `medicitas_app` con el GUC de norte, devuelve 0. Como superusuario (RLS no aplica) devuelve las filas. Un `INSERT` hacia sur con el GUC de norte lo rechaza el motor (`42501`).
+3. La misma consulta `SELECT count(*) FROM "Paciente" WHERE "clinicaId" = <sur>`, como `medicitas_recepcion` con el GUC de norte, devuelve 0. Como superusuario (RLS no aplica) devuelve las filas. Un `INSERT` hacia sur con el GUC de norte lo rechaza el motor (`42501`).
 4. Sin GUC, el conteo de `"Paciente"` es 0. Con `app.rol = adm_plataforma`, se ven varias clínicas.
 
 La prueba es `TestIntegrationRLS`. La medición de 100 repeticiones queda en [`rls.md`](rls.md).

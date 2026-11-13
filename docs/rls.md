@@ -6,7 +6,18 @@ RLS es la segunda estrategia, encendida en [`db/migrations/03_rls.sql`](../db/mi
 
 ## Por qué la API no entra como superusuario
 
-`POSTGRES_USER` es superusuario. Un superusuario **ignora** Row-Level Security aunque la tabla tenga `FORCE ROW LEVEL SECURITY`. Migraciones y el job `seed` siguen con ese usuario, para poder cargar datos. La API entra como `medicitas_app` (`LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`). Compose lo apunta con `APP_DB_USER` / `APP_DB_PASSWORD` (en local, ambos `medicitas_app`).
+`POSTGRES_USER` es superusuario. Un superusuario **ignora** Row-Level Security aunque la tabla tenga `FORCE ROW LEVEL SECURITY`. Migraciones y el job `seed` siguen con ese usuario, para poder cargar datos. La API entra como `medicitas_app` (`LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOINHERIT`). Compose lo apunta con `APP_DB_USER` / `APP_DB_PASSWORD` (en local, ambos `medicitas_app`).
+
+Ese login solo puede leer `"Usuario"`, `"Clinica"` y `"Rol"` para resolver la sesión. Después `SET ROLE` baja al perfil de la matriz ([`04_db_roles_matrix.sql`](../db/migrations/04_db_roles_matrix.sql)):
+
+| Código de `"Rol"` | Perfil SQL | Privilegio |
+|-------------------|------------|------------|
+| `adm_plataforma` | `medicitas_adm_plataforma` | Alta de clínica y de su primer administrador (RF1) |
+| `adm_clinica` | `medicitas_adm_clinica` | Catálogo, agenda, pacientes, citas y lectura de la bitácora |
+| `recepcion` | `medicitas_recepcion` | Pacientes, citas y disponibilidad. Sin catálogo ni bitácora |
+| `profesional` | `medicitas_profesional` | Horarios, bloqueos, desenlace y notas. Pacientes solo lectura |
+
+`"Auditoria"` no tiene `UPDATE` ni `DELETE` en ningún perfil. `"Bloqueo"` no tiene `UPDATE`. `"AgendaVersion"` la mueven funciones `SECURITY DEFINER`, no un `GRANT` de escritura.
 
 ## Qué ve cada sesión
 
@@ -28,7 +39,7 @@ GUC vacío → cero filas de tenant. Es fallo cerrado.
 
 `set_config` en una conexión del pool no alcanza: la siguiente sentencia puede salir por otra. `loadDomainUser` toma una `*sql.Conn`, fija las variables ahí y la guarda en el contexto. Los stores consultan esa conexión.
 
-No es `SET LOCAL`. Cada store hace `COMMIT` de su propio hecho y **después** invalida Redis (I8). Un `SET LOCAL` moriría en ese `COMMIT` y el resto de la petición quedaría sin clínica. Al terminar la petición se hace `set_config` a vacío antes de devolver la conexión al pool. Si ese reset falla, la conexión se descarta.
+No es `SET LOCAL`. Cada store hace `COMMIT` de su propio hecho y **después** invalida Redis (I8). Un `SET LOCAL` moriría en ese `COMMIT` y el resto de la petición quedaría sin clínica. `SET ROLE` tampoco es local: vale para toda la conexión. Al terminar la petición se hace `RESET ROLE` y `set_config` a vacío antes de devolver la conexión al pool. Si ese reset falla, la conexión se descarta.
 
 ## Comparación sobre la misma consulta
 
@@ -37,10 +48,11 @@ No es `SET LOCAL`. Cada store hace `COMMIT` de su propio hecho y **después** in
 | Camino | Qué pasa |
 |--------|----------|
 | Superusuario | RLS no aplica. El `WHERE` es el único filtro (estrategia de columna). |
-| `medicitas_app` con `app.clinica_id` de norte | La misma consulta. Además, el `WHERE` de la clínica sur devuelve 0. |
-| `medicitas_app` sin GUC | `count(*)` de `"Paciente"` es 0. |
-| `app.rol = adm_plataforma` | Ve pacientes de más de una clínica. |
+| `medicitas_recepcion` con `app.clinica_id` de norte | La misma consulta. Además, el `WHERE` de la clínica sur devuelve 0. |
+| `medicitas_recepcion` sin GUC | `count(*)` de `"Paciente"` es 0. |
+| `medicitas_adm_plataforma` | Ve las clínicas (RF1). No puede leer `"Paciente"`. |
 | `INSERT` de un paciente de sur con GUC de norte | El motor rechaza (`42501`). |
+| Recepción `INSERT` en `"Servicio"`, profesional `SELECT` en `"Auditoria"` | El motor rechaza (`42501`): el perfil no tiene ese privilegio. |
 
 La API sigue ignorando `?clinicaId=sur` (columna + identidad). Con RLS, ese filtro ya no es la única barrera.
 

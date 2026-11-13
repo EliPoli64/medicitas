@@ -107,7 +107,7 @@ func TestUpdateServicioActivoInvalidaCache(t *testing.T) {
 	assertEpochUnchanged(t, cacheStore, "clinica-norte", "p2", old)
 }
 
-func TestUpdateServicioDuracionYActivoParcialInvalidaCache(t *testing.T) {
+func TestUpdateServicioDuracionYActivoFallaNoInvalidaCache(t *testing.T) {
 	cacheStore := newInvalidationCacheStore(t)
 	old := strings.Repeat("e", 32)
 	seedEpoch(cacheStore, "clinica-norte", "p1", old)
@@ -122,9 +122,9 @@ func TestUpdateServicioDuracionYActivoParcialInvalidaCache(t *testing.T) {
 	if code != http.StatusInternalServerError {
 		t.Fatalf("status=%d want 500", code)
 	}
-	// UpdateServicio confirmó el cambio de duración; la invalidación debe
-	// ocurrir aunque SetServicioActivo haya fallado.
-	assertEpochRotated(t, cacheStore, "clinica-norte", "p1", old)
+	// Duración y estado van en la misma transacción. Si el estado falla,
+	// no queda duración aplicada y no se invalida la caché.
+	assertEpochUnchanged(t, cacheStore, "clinica-norte", "p1", old)
 }
 
 func TestUpdateServicioProfesionalesDelServicioFalla(t *testing.T) {

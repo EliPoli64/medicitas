@@ -469,6 +469,76 @@ func TestDisponibilidadProfesionalUsaCache(t *testing.T) {
 	}
 }
 
+func TestDisponibilidadCacheHitOcultaEspaciosPasados(t *testing.T) {
+	tk := newTestKeys(t)
+	srv := tk.jwksServer()
+	defer srv.Close()
+
+	ahora := fechaLocal(t, 2030, 3, 11, 9, 29)
+	prevNow := nowFn
+	nowFn = func() time.Time { return ahora }
+	t.Cleanup(func() { nowFn = prevNow })
+
+	fecha := fechaLocal(t, 2030, 3, 11, 12, 0)
+	dispo := &fakeDispoStore{
+		duracion: 30,
+		activo:   true,
+		prof:     ProfesionalDispo{ID: "p1", IdpSub: "sub-1", Especialidad: "Cardiología", Activo: true},
+		hab:      true,
+		datos: map[string]DatosAgenda{
+			"p1": {Horarios: []HorarioAgenda{{
+				DiaSemana: isoDow(fecha.Weekday()), MinutoInicio: 8 * 60, MinutoFin: 12 * 60,
+				VigenteDesde: "2030-01-01",
+			}}},
+		},
+	}
+	r := setupDispoTestEnv(t, srv.URL, dispo, admClinicaUser())
+
+	store := newRecordingCacheStore()
+	cache, err := availabilitycache.NewCache(
+		store,
+		availabilitycache.DefaultConfig(),
+		availabilitycache.WithVersionResolver(nopAgendaVersionResolver{}),
+	)
+	if err != nil {
+		t.Fatalf("NewCache() error = %v", err)
+	}
+	prevCache := availabilityCache
+	availabilityCache = cache
+	prevLoader := loaderDisponibilidad
+	counter := &countingLoaderEnvuelve{inner: newDisponibilidadLoader(dispo).Load}
+	loaderDisponibilidad = counter
+	t.Cleanup(func() {
+		availabilityCache = prevCache
+		loaderDisponibilidad = prevLoader
+	})
+
+	query := "/profesionales/p1/disponibilidad?fecha=2030-03-11&servicioId=s1"
+	code, w := doGet(t, r, query, mintAdm(t, tk))
+	if code != http.StatusOK {
+		t.Fatalf("first status=%d body=%s", code, w.Body.String())
+	}
+	if !contains(w.Body.String(), "09:30:00-06:00") {
+		t.Fatalf("el espacio de las 09:30 debía existir a las 09:29: %s", w.Body.String())
+	}
+
+	ahora = fechaLocal(t, 2030, 3, 11, 9, 31)
+	code, w = doGet(t, r, query, mintAdm(t, tk))
+	if code != http.StatusOK {
+		t.Fatalf("second status=%d body=%s", code, w.Body.String())
+	}
+	if counter.calls != 1 {
+		t.Fatalf("loader calls = %d, want 1 (el Snapshot sigue vigente)", counter.calls)
+	}
+	body := w.Body.String()
+	if contains(body, "09:30:00-06:00") {
+		t.Fatalf("el HIT devolvió un espacio ya iniciado: %s", body)
+	}
+	if !contains(body, "10:00:00-06:00") {
+		t.Fatalf("faltó un espacio futuro: %s", body)
+	}
+}
+
 func TestDisponibilidadParametrosInvalidos400(t *testing.T) {
 	tk := newTestKeys(t)
 	srv := tk.jwksServer()

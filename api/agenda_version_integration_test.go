@@ -713,3 +713,79 @@ func TestAgendaVersionCitaConcurrenciaNoPierdeIncrementos(t *testing.T) {
 		t.Fatalf("versión final = %d, want %d", v, v0+n)
 	}
 }
+
+func TestAgendaVersionBloqueoUpdateIncrementa(t *testing.T) {
+	db := agendaVersionDB(t)
+	defer db.Close()
+
+	clinicaID, profesionalID, _, usuarioID := fixturesAgendaVersion(t, db)
+	v0 := versionDeAgenda(t, db, clinicaID, profesionalID)
+
+	var bloqueoID string
+	if err := db.QueryRow(
+		`INSERT INTO "Bloqueo" ("clinicaId", "profesionalId", "inicio", "fin", "motivo", "creadoPorUsuarioId")
+		 VALUES ($1::uuid, $2::uuid, now(), now() + interval '1 hour', 'motivo', $3::uuid)
+		 RETURNING "id"::text`,
+		clinicaID, profesionalID, usuarioID,
+	).Scan(&bloqueoID); err != nil {
+		t.Fatalf("insertar bloqueo: %v", err)
+	}
+	mustExec(context.Background(), t, db,
+		`UPDATE "Bloqueo" SET "motivo" = 'motivo editado' WHERE "id" = $1::uuid`,
+		bloqueoID)
+	if v := versionDeAgenda(t, db, clinicaID, profesionalID); v != v0+2 {
+		t.Fatalf("tras UPDATE bloqueo: versión = %d, want %d", v, v0+2)
+	}
+}
+
+func TestAgendaVersionHorarioMoverProfesionalIncrementaAmbos(t *testing.T) {
+	db := agendaVersionDB(t)
+	defer db.Close()
+
+	clinicaID, p1, _, _ := fixturesAgendaVersion(t, db)
+	p2Usuario := newTestUUID()
+	p2 := newTestUUID()
+	mustExec(context.Background(), t, db,
+		`INSERT INTO "Usuario" ("id", "idpSub", "clinicaId", "rolId", "activo")
+		 SELECT $1::uuid, $1::text, $2::uuid, "id", true FROM "Rol" WHERE "codigo" = 'profesional'`,
+		p2Usuario, clinicaID)
+	mustExec(context.Background(), t, db,
+		`INSERT INTO "Profesional" ("id", "clinicaId", "usuarioId", "especialidadId", "activo")
+		 SELECT $1::uuid, $2::uuid, $3::uuid, "especialidadId", true FROM "Profesional" WHERE "id" = $4::uuid`,
+		p2, clinicaID, p2Usuario, p1)
+
+	mustExec(context.Background(), t, db,
+		`INSERT INTO "HorarioAtencion" ("clinicaId", "profesionalId", "diaSemana", "horaInicio", "horaFin", "vigenteDesde", "activo")
+		 VALUES ($1::uuid, $2::uuid, 1, '08:00:00', '12:00:00', current_date, true)`,
+		clinicaID, p1)
+	v1 := versionDeAgenda(t, db, clinicaID, p1)
+	v2 := versionDeAgenda(t, db, clinicaID, p2)
+
+	mustExec(context.Background(), t, db,
+		`UPDATE "HorarioAtencion" SET "profesionalId" = $3::uuid
+		 WHERE "clinicaId" = $1::uuid AND "profesionalId" = $2::uuid`,
+		clinicaID, p1, p2)
+	if v := versionDeAgenda(t, db, clinicaID, p2); v != v2+1 {
+		t.Fatalf("agenda destino = %d, want %d", v, v2+1)
+	}
+	if v := versionDeAgenda(t, db, clinicaID, p1); v != v1+1 {
+		t.Fatalf("agenda origen = %d, want %d", v, v1+1)
+	}
+}
+
+func TestAgendaVersionIncrementoCreaFilaSiFalta(t *testing.T) {
+	db := agendaVersionDB(t)
+	defer db.Close()
+
+	clinicaID, profesionalID, _, _ := fixturesAgendaVersion(t, db)
+	mustExec(context.Background(), t, db,
+		`DELETE FROM "AgendaVersion" WHERE "clinicaId" = $1::uuid AND "profesionalId" = $2::uuid`,
+		clinicaID, profesionalID)
+	mustExec(context.Background(), t, db,
+		`INSERT INTO "HorarioAtencion" ("clinicaId", "profesionalId", "diaSemana", "horaInicio", "horaFin", "vigenteDesde", "activo")
+		 VALUES ($1::uuid, $2::uuid, 2, '08:00:00', '12:00:00', current_date, true)`,
+		clinicaID, profesionalID)
+	if v := versionDeAgenda(t, db, clinicaID, profesionalID); v != 1 {
+		t.Fatalf("versión recreada = %d, want 1", v)
+	}
+}

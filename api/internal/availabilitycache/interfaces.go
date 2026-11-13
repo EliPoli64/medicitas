@@ -38,6 +38,7 @@ type LoaderFunc func(ctx context.Context, req Request) (Snapshot, error)
 // fake.
 type AgendaVersionResolver interface {
 	// Resolve devuelve la versión actual de la agenda para el profesional en
-	// la clínica. Si la fila no existe, devuelve 0 y nil.
+	// la clínica. Si la fila no existe, devuelve un error: versión 0 solo es
+	// válida cuando la fila existe.
 	Resolve(ctx context.Context, clinicaID, profesionalID string) (int64, error)
 }

@@ -23,7 +23,7 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 ## Estado actual
 
 - Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
-- **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`. [`03_rls.sql`](db/migrations/03_rls.sql) añade RLS y el rol `medicitas_app`.
+- **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`. [`03_rls.sql`](db/migrations/03_rls.sql) añade RLS y el rol de conexión `medicitas_app`. [`04_db_roles_matrix.sql`](db/migrations/04_db_roles_matrix.sql) parte ese acceso en perfiles SQL de menor privilegio alineados con la matriz.
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
 - **Identidad (Matías) — cerrada:** Keycloak realm + JWT/JWKS + matriz RF17 + `sub`→`"Usuario"` + alineación claim/BD (I5). Rutas: `/health`, `/ready`, `/me`, `/permisos`. Colección [`docs/http/identidad.http`](docs/http/identidad.http); smoke [`scripts/smoke-identidad.ps1`](scripts/smoke-identidad.ps1); integración `go test -tags=integration`. Checklist en [`docs/keycloak.md`](docs/keycloak.md).
@@ -54,10 +54,10 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 
 ## Base de datos
 
-- Esquema: [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql). RLS: [`db/migrations/03_rls.sql`](db/migrations/03_rls.sql) y [`docs/rls.md`](docs/rls.md).
+- Esquema: [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql). RLS: [`db/migrations/03_rls.sql`](db/migrations/03_rls.sql). Perfiles SQL: [`db/migrations/04_db_roles_matrix.sql`](db/migrations/04_db_roles_matrix.sql) y [`docs/rls.md`](docs/rls.md).
 - Diagrama ER: [`docs/esquema-er.md`](docs/esquema-er.md).
 - La imagen `db` ejecuta los archivos de `db/migrations/` al inicializar el volumen de PostgreSQL. El job `seed` aplica las que falten en un volumen ya creado.
-- La API entra como `medicitas_app` (RLS). Seed y Keycloak siguen como superusuario. Falta partir recepción y profesional en roles SQL distintos (punto 5 del núcleo, no este módulo).
+- La API entra como `medicitas_app` (RLS, sin heredar privilegios) y hace `SET ROLE` al perfil de la matriz (`medicitas_recepcion`, `medicitas_profesional`, `medicitas_adm_clinica`, `medicitas_adm_plataforma`). Seed y Keycloak siguen como superusuario.
 
 ### Semilla
 

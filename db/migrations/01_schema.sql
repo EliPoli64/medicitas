@@ -8,8 +8,8 @@
 --   * Las tablas de negocio viven en public. Los objetos técnicos viven en ops.
 --   * Los catálogos base (roles y tipos de contacto) se cargan al final.
 --
--- RLS de tenant y el rol medicitas_app viven en 03_rls.sql.
--- Los tres roles SQL de la matriz (recepción / profesional / adm) siguen pendientes.
+-- RLS de tenant y el rol de conexión medicitas_app viven en 03_rls.sql.
+-- Los perfiles SQL de la matriz (recepción / profesional / adm) viven en 04_db_roles_matrix.sql.
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

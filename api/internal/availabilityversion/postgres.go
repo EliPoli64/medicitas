@@ -16,6 +16,9 @@ import (
 	"medicitas/api/internal/rlsctx"
 )
 
+// ErrAgendaVersionAusente indica que no hay fila en "AgendaVersion".
+var ErrAgendaVersionAusente = errors.New("availabilityversion: no existe la fila de AgendaVersion")
+
 // PostgresResolver implementa availabilitycache.AgendaVersionResolver sobre
 // una conexión *sql.DB a PostgreSQL.
 type PostgresResolver struct {
@@ -36,7 +39,9 @@ func NewPostgresResolver(db *sql.DB) availabilitycache.AgendaVersionResolver {
 // de modo que availabilitycache no necesita conocer dos formas de referirse a
 // la misma clínica.
 //
-// Si la fila no existe, devuelve 0 y nil (la agenda nunca fue registrada).
+// Si la fila no existe, devuelve ErrAgendaVersionAusente. No es lo mismo que
+// una agenda registrada en versión 0: sin fila no hay versión autoritativa
+// y un Snapshot con versión 0 no debe aceptarse como vigente.
 // Los errores de PostgreSQL se propagan envueltos para no perder contexto.
 func (r *PostgresResolver) Resolve(ctx context.Context, clinicaIdent, profesionalID string) (int64, error) {
 	if r.db == nil {
@@ -52,9 +57,13 @@ func (r *PostgresResolver) Resolve(ctx context.Context, clinicaIdent, profesiona
 		clinicaIdent, profesionalID,
 	).Scan(&version)
 
+	return interpretAgendaVersion(version, err)
+}
+
+func interpretAgendaVersion(version int64, err error) (int64, error) {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil
+			return 0, ErrAgendaVersionAusente
 		}
 		return 0, fmt.Errorf("availabilityversion: query agenda version: %w", err)
 	}

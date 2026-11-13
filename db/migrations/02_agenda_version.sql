@@ -44,6 +44,7 @@ ON CONFLICT ("clinicaId", "profesionalId") DO NOTHING;
 CREATE OR REPLACE FUNCTION app."crearAgendaVersionProfesional"()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
@@ -55,20 +56,25 @@ END;
 $$;
 
 -- Incrementa en uno la versión de una agenda concreta.
+-- UPSERT: una fila ausente no se queda en "versión 0 implícita". El primer
+-- incremento crea la fila en 1. SECURITY DEFINER para que los perfiles de
+-- menor privilegio no necesiten UPDATE directo sobre "AgendaVersion".
 CREATE OR REPLACE FUNCTION app."incrementarAgendaVersion"(
     pClinicaId uuid,
     pProfesionalId uuid
 )
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-    UPDATE "AgendaVersion"
-    SET "version" = "version" + 1,
-        "actualizadoEn" = now()
-    WHERE "clinicaId" = pClinicaId
-      AND "profesionalId" = pProfesionalId;
+    INSERT INTO "AgendaVersion" ("clinicaId", "profesionalId", "version")
+    VALUES (pClinicaId, pProfesionalId, 1)
+    ON CONFLICT ("clinicaId", "profesionalId")
+    DO UPDATE SET
+        "version" = "AgendaVersion"."version" + 1,
+        "actualizadoEn" = now();
 END;
 $$;
 
@@ -80,17 +86,19 @@ CREATE OR REPLACE FUNCTION app."incrementarAgendaVersionPorServicio"(
 )
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-    UPDATE "AgendaVersion" av
-    SET "version" = av."version" + 1,
-        "actualizadoEn" = now()
+    INSERT INTO "AgendaVersion" ("clinicaId", "profesionalId", "version")
+    SELECT ps."clinicaId", ps."profesionalId", 1
     FROM "ProfesionalServicio" ps
     WHERE ps."clinicaId" = pClinicaId
       AND ps."servicioId" = pServicioId
-      AND av."clinicaId" = ps."clinicaId"
-      AND av."profesionalId" = ps."profesionalId";
+    ON CONFLICT ("clinicaId", "profesionalId")
+    DO UPDATE SET
+        "version" = "AgendaVersion"."version" + 1,
+        "actualizadoEn" = now();
 END;
 $$;
 
@@ -177,13 +185,21 @@ BEGIN
            OR NEW."horaFin" IS DISTINCT FROM OLD."horaFin"
            OR NEW."vigenteDesde" IS DISTINCT FROM OLD."vigenteDesde"
            OR NEW."vigenteHasta" IS DISTINCT FROM OLD."vigenteHasta"
-           OR NEW."activo" IS DISTINCT FROM OLD."activo" THEN
+           OR NEW."activo" IS DISTINCT FROM OLD."activo"
+           OR NEW."profesionalId" IS DISTINCT FROM OLD."profesionalId"
+           OR NEW."clinicaId" IS DISTINCT FROM OLD."clinicaId" THEN
             vRelevante := true;
         END IF;
     END IF;
 
     IF vRelevante THEN
         PERFORM app."incrementarAgendaVersion"(vClinicaId, vProfesionalId);
+    END IF;
+    -- Mover el horario de profesional o de clínica también vacía la agenda anterior.
+    IF TG_OP = 'UPDATE'
+       AND (NEW."profesionalId" IS DISTINCT FROM OLD."profesionalId"
+            OR NEW."clinicaId" IS DISTINCT FROM OLD."clinicaId") THEN
+        PERFORM app."incrementarAgendaVersion"(OLD."clinicaId", OLD."profesionalId");
     END IF;
     RETURN COALESCE(NEW, OLD);
 END;
@@ -205,8 +221,15 @@ BEGIN
     ELSIF TG_OP = 'DELETE' THEN
         vClinicaId := OLD."clinicaId";
         vProfesionalId := OLD."profesionalId";
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- La API no expone UPDATE, pero un UPDATE directo en SQL sí altera la agenda.
+        PERFORM app."incrementarAgendaVersion"(NEW."clinicaId", NEW."profesionalId");
+        IF NEW."profesionalId" IS DISTINCT FROM OLD."profesionalId"
+           OR NEW."clinicaId" IS DISTINCT FROM OLD."clinicaId" THEN
+            PERFORM app."incrementarAgendaVersion"(OLD."clinicaId", OLD."profesionalId");
+        END IF;
+        RETURN NEW;
     ELSE
-        -- "Bloqueo" no admite UPDATE; por seguridad no se hace nada.
         RETURN COALESCE(NEW, OLD);
     END IF;
 
@@ -295,7 +318,7 @@ CREATE TRIGGER "AgendaVersionHorarioAtencion"
 
 DROP TRIGGER IF EXISTS "AgendaVersionBloqueo" ON "Bloqueo";
 CREATE TRIGGER "AgendaVersionBloqueo"
-    AFTER INSERT OR DELETE ON "Bloqueo"
+    AFTER INSERT OR UPDATE OR DELETE ON "Bloqueo"
     FOR EACH ROW EXECUTE FUNCTION app."trgAgendaVersionBloqueo"();
 
 DROP TRIGGER IF EXISTS "AgendaVersionCita" ON "Cita";

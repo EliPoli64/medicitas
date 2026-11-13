@@ -55,6 +55,9 @@ type ServiceStore interface {
 	UpdateServicio(ctx context.Context, clinicaIdent, id string, nombre *string, duracion *int) (Service, error)
 	// SetServicioActivo hace la baja lógica del catálogo.
 	SetServicioActivo(ctx context.Context, clinicaIdent, id string, activo bool) (Service, error)
+	// PatchServicio aplica nombre, duración y estado en una sola transacción.
+	// Nil = sin cambio. Si cualquier parte falla, no queda un UPDATE parcial.
+	PatchServicio(ctx context.Context, clinicaIdent, id string, nombre *string, duracion *int, activo *bool) (Service, error)
 	// ProfesionalesDelServicio devuelve los IDs de profesionales de la clínica
 	// que tienen el servicio habilitado. Se usa para invalidar la caché cuando
 	// cambian la duración o el estado de un servicio.
@@ -204,6 +207,58 @@ RETURNING s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::tex
 	}
 	if err != nil {
 		return Service{}, fmt.Errorf("activar/desactivar servicio: %w", err)
+	}
+	return svc, nil
+}
+
+func (s *pgServiceStore) PatchServicio(ctx context.Context, clinicaIdent, id string, nombre *string, duracion *int, activo *bool) (Service, error) {
+	tx, err := beginDB(ctx, s.db)
+	if err != nil {
+		return Service{}, fmt.Errorf("abrir transacción: %w", err)
+	}
+	defer tx.Rollback()
+
+	var nombreVal sql.NullString
+	if nombre != nil {
+		nombreVal = sql.NullString{Valid: true, String: *nombre}
+	}
+	var duracionVal sql.NullInt64
+	if duracion != nil {
+		duracionVal = sql.NullInt64{Valid: true, Int64: int64(*duracion)}
+	}
+	var activoVal sql.NullBool
+	if activo != nil {
+		activoVal = sql.NullBool{Valid: true, Bool: *activo}
+	}
+	var svc Service
+	err = tx.QueryRowContext(ctx, `
+UPDATE "Servicio" s
+SET "nombre"          = COALESCE($3, s."nombre"),
+    "duracionMinutos" = COALESCE($4, s."duracionMinutos"),
+    "activo"          = COALESCE($5, s."activo")
+FROM "Clinica" c
+WHERE s."id" = $2
+  AND s."clinicaId" = c."id"
+  AND c."identificador" = $1
+RETURNING s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::text,
+          (SELECT e."nombre" FROM "Especialidad" e WHERE e."id" = s."especialidadId"),
+          s."activo"`,
+		clinicaIdent, id, nombreVal, duracionVal, activoVal,
+	).Scan(&svc.ID, &svc.Nombre, &svc.DuracionMinutos, &svc.EspecialidadID, &svc.EspecialidadNombre, &svc.Activo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Service{}, errServicioFueraDeClinica
+	}
+	if isUniqueViolation(err, "ServicioNombreUq") {
+		return Service{}, errServicioDuplicado
+	}
+	if isCheckViolation(err) {
+		return Service{}, errDuracionInvalida
+	}
+	if err != nil {
+		return Service{}, fmt.Errorf("actualizar servicio: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Service{}, fmt.Errorf("confirmar servicio: %w", err)
 	}
 	return svc, nil
 }
@@ -358,30 +413,10 @@ func updateServicio(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	var updated Service
-	var err error
-	// Solo la duración y el estado (activo) alteran los espacios ofrecidos.
-	afectaDisponibilidad := false
-
-	if req.Nombre != nil || req.DuracionMinutos != nil {
-		updated, err = serviceStore.UpdateServicio(c.Request.Context(), clinica, id, req.Nombre, req.DuracionMinutos)
-		if err == nil && req.DuracionMinutos != nil {
-			afectaDisponibilidad = true
-		}
-	}
-	if err == nil && req.Activo != nil {
-		updated, err = serviceStore.SetServicioActivo(c.Request.Context(), clinica, id, *req.Activo)
-		if err == nil {
-			afectaDisponibilidad = true
-		}
-	}
-	// Si UpdateServicio confirmó un cambio de disponibilidad y SetServicioActivo
-	// falló después, el COMMIT parcial ya modificó la base; invalidamos igual.
-	// Usamos el id del path porque SetServicioActivo puede devolver un Service
-	// vacío al fallar.
-	if err != nil && afectaDisponibilidad {
-		invalidarAgendasPorServicio(c.Request.Context(), clinica, id)
-	}
+	updated, err := serviceStore.PatchServicio(c.Request.Context(), clinica, id, req.Nombre, req.DuracionMinutos, req.Activo)
+	// Duración y estado cambian los espacios. La invalidación va después del
+	// COMMIT: si la transacción falla, la fila no quedó a medias.
+	afectaDisponibilidad := err == nil && (req.DuracionMinutos != nil || req.Activo != nil)
 	switch {
 	case errors.Is(err, errServicioFueraDeClinica):
 		c.JSON(http.StatusNotFound, gin.H{"error": "servicio no encontrado"})
