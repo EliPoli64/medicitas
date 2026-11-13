@@ -28,7 +28,7 @@ Reparto acordado en la práctica (Keycloak / Redis / semilla).
 
 ## Módulo extra (obligatorio para 3)
 
-Elegir exactamente uno. Propuesta: **RLS como segunda estrategia**.
+Elegido: **RLS como segunda estrategia**. Hecho en [`db/migrations/03_rls.sql`](../db/migrations/03_rls.sql). La columna `clinicaId` sigue siendo la estrategia principal. Detalle y medición: [`rls.md`](rls.md).
 
 ## Convención de commits
 

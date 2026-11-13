@@ -104,7 +104,7 @@ FROM "Clinica" c
 WHERE c."identificador" = $1
 RETURNING ` + citaSelectCols
 
-	a, err := scanAppointment(s.db.QueryRowContext(ctx, q, clinicaIdent, pacienteID, profesionalID, servicioID, inicio.UTC()))
+	a, err := scanAppointment(dbq(ctx, s.db).QueryRowContext(ctx, q, clinicaIdent, pacienteID, profesionalID, servicioID, inicio.UTC()))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Appointment{}, errCitaClinicaInexistente
 	}
@@ -115,7 +115,7 @@ RETURNING ` + citaSelectCols
 }
 
 func (s *pgAppointmentStore) GetCita(ctx context.Context, clinicaIdent, citaID string) (Appointment, error) {
-	a, err := scanAppointment(s.db.QueryRowContext(ctx, `
+	a, err := scanAppointment(dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT ci."id"::text, ci."pacienteId"::text, ci."profesionalId"::text, ci."servicioId"::text,
        ci."inicio", ci."fin", ci."duracionMinutos", ci."estado"::text,
        COALESCE(ci."citaOrigenId"::text, '')
@@ -133,7 +133,7 @@ WHERE c."identificador" = $1 AND ci."id" = $2`, clinicaIdent, citaID))
 
 func (s *pgAppointmentStore) ProfesionalIDByUsuarioID(ctx context.Context, clinicaIdent, usuarioID string) (string, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."id"::text
 FROM "Profesional" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
@@ -156,7 +156,7 @@ func (s *pgAppointmentStore) Reprogramar(ctx context.Context, clinicaIdent, cita
 	}
 
 	var clinicaUUID string
-	if err := s.db.QueryRowContext(ctx, `
+	if err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT "id"::text FROM "Clinica" WHERE "identificador" = $1`, clinicaIdent,
 	).Scan(&clinicaUUID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -166,7 +166,7 @@ SELECT "id"::text FROM "Clinica" WHERE "identificador" = $1`, clinicaIdent,
 	}
 
 	var nuevoID string
-	err = s.db.QueryRowContext(ctx, `
+	err = dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT app."reprogramarCita"($1::uuid, $2::uuid, $3::timestamptz, $4::uuid, $5::uuid)::text`,
 		citaID, clinicaUUID, nuevoInicio.UTC(), nullableUUID(nuevoProfesionalID), nullableUUID(nuevoServicioID),
 	).Scan(&nuevoID)
@@ -193,7 +193,7 @@ func nullableUUID(p *string) any {
 }
 
 func (s *pgAppointmentStore) Cancelar(ctx context.Context, clinicaIdent, citaID, usuarioID, motivo string) (Appointment, error) {
-	a, err := scanAppointment(s.db.QueryRowContext(ctx, `
+	a, err := scanAppointment(dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Cita" ci
 SET "estado" = 'cancelada',
     "canceladaEn" = now(),
@@ -225,7 +225,7 @@ RETURNING ci."id"::text, ci."pacienteId"::text, ci."profesionalId"::text, ci."se
 }
 
 func (s *pgAppointmentStore) RegistrarDesenlace(ctx context.Context, clinicaIdent, citaID, estado string) (Appointment, error) {
-	a, err := scanAppointment(s.db.QueryRowContext(ctx, `
+	a, err := scanAppointment(dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Cita" ci
 SET "estado" = $3::"EstadoCita"
 FROM "Clinica" c

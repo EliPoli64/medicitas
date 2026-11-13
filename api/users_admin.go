@@ -75,7 +75,7 @@ func newPGUserAdminStore(database *sql.DB) *pgUserAdminStore {
 
 func (s *pgUserAdminStore) CreateUsuario(ctx context.Context, clinicaIdent, idpSub, rolCodigo string) (AdminUser, error) {
 	var u AdminUser
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 INSERT INTO "Usuario" ("idpSub", "clinicaId", "rolId")
 VALUES ($1,
         (SELECT "id" FROM "Clinica" WHERE "identificador" = $2),
@@ -94,7 +94,7 @@ RETURNING "id"::text, "idpSub", "activo", "creadoEn"::text`,
 }
 
 func (s *pgUserAdminStore) ListUsuarios(ctx context.Context, clinicaIdent string) ([]AdminUser, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT u."id"::text, u."idpSub", r."codigo", u."activo", u."creadoEn"::text
 FROM "Usuario" u
 JOIN "Clinica" c ON c."id" = u."clinicaId"
@@ -123,7 +123,7 @@ ORDER BY u."creadoEn"`,
 
 func (s *pgUserAdminStore) GetUsuario(ctx context.Context, clinicaIdent, id string) (AdminUser, error) {
 	var u AdminUser
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT u."id"::text, u."idpSub", r."codigo", u."activo", u."creadoEn"::text
 FROM "Usuario" u
 JOIN "Clinica" c ON c."id" = u."clinicaId"
@@ -150,7 +150,7 @@ func (s *pgUserAdminStore) UpdateUsuario(ctx context.Context, clinicaIdent, id s
 		activoVal = sql.NullBool{Valid: true, Bool: *activo}
 	}
 	var u AdminUser
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Usuario" u
 SET "rolId"  = COALESCE((SELECT r."id" FROM "Rol" r WHERE r."codigo" = $3), u."rolId"),
     "activo" = COALESCE($4, u."activo")

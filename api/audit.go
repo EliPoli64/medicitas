@@ -154,7 +154,7 @@ func newPGAuditStore(database *sql.DB) *pgAuditStore {
 
 func (s *pgAuditStore) Registrar(ctx context.Context, clinicaIdent string, actor AuditActor, evs ...AuditEvento) error {
 	for _, ev := range evs {
-		if err := insertAuditoria(ctx, s.db, clinicaIdent, actor, ev); err != nil {
+		if err := insertAuditoria(ctx, dbq(ctx, s.db), clinicaIdent, actor, ev); err != nil {
 			return err
 		}
 	}
@@ -162,7 +162,7 @@ func (s *pgAuditStore) Registrar(ctx context.Context, clinicaIdent string, actor
 }
 
 func (s *pgAuditStore) Listar(ctx context.Context, clinicaIdent string, f BitacoraFiltro) ([]BitacoraEntrada, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT a."id", a."accion", a."entidad",
        COALESCE(a."entidadId"::text, ''), COALESCE(a."usuarioId"::text, ''),
        COALESCE(a."idpSub", ''), COALESCE(a."pacienteId"::text, ''),

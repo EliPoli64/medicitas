@@ -74,7 +74,7 @@ func (s *pgServiceStore) CreateServicio(ctx context.Context, clinicaIdent, nombr
 	// La especialidad debe existir y estar activa (RF3: "la especialidad que
 	// requiere"); el CHECK y la FK del esquema son la red de seguridad.
 	var svc Service
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 INSERT INTO "Servicio" ("clinicaId", "nombre", "duracionMinutos", "especialidadId")
 VALUES ((SELECT "id" FROM "Clinica" WHERE "identificador" = $1), $2, $3,
         (SELECT "id" FROM "Especialidad" WHERE "id" = $4 AND "activo" = true))
@@ -97,7 +97,7 @@ RETURNING "id"::text, "nombre", "duracionMinutos", "especialidadId"::text,
 }
 
 func (s *pgServiceStore) ListServicios(ctx context.Context, clinicaIdent string) ([]Service, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::text,
        e."nombre", s."activo"
 FROM "Servicio" s
@@ -128,7 +128,7 @@ ORDER BY s."nombre"`,
 
 func (s *pgServiceStore) GetServicio(ctx context.Context, clinicaIdent, id string) (Service, error) {
 	var svc Service
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::text,
        e."nombre", s."activo"
 FROM "Servicio" s
@@ -157,7 +157,7 @@ func (s *pgServiceStore) UpdateServicio(ctx context.Context, clinicaIdent, id st
 		duracionVal = sql.NullInt64{Valid: true, Int64: int64(*duracion)}
 	}
 	var svc Service
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Servicio" s
 SET "nombre"          = COALESCE($3, s."nombre"),
     "duracionMinutos" = COALESCE($4, s."duracionMinutos")
@@ -187,7 +187,7 @@ RETURNING s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::tex
 
 func (s *pgServiceStore) SetServicioActivo(ctx context.Context, clinicaIdent, id string, activo bool) (Service, error) {
 	var svc Service
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Servicio" s
 SET "activo" = $3
 FROM "Clinica" c
@@ -209,7 +209,7 @@ RETURNING s."id"::text, s."nombre", s."duracionMinutos", s."especialidadId"::tex
 }
 
 func (s *pgServiceStore) ProfesionalesDelServicio(ctx context.Context, clinicaIdent, servicioID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT ps."profesionalId"::text
 FROM "ProfesionalServicio" ps
 JOIN "Clinica" c ON c."id" = ps."clinicaId"
@@ -233,7 +233,7 @@ WHERE c."identificador" = $1 AND ps."servicioId" = $2`,
 }
 
 func (s *pgServiceStore) ListEspecialidades(ctx context.Context) ([]Especialidad, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT "id"::text, "codigo", "nombre", "activo"
 FROM "Especialidad"
 ORDER BY "nombre"`)

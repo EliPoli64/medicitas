@@ -79,7 +79,7 @@ func newPGNotaStore(database *sql.DB) *pgNotaStore {
 
 func (s *pgNotaStore) CitaParaNota(ctx context.Context, clinicaIdent, citaID string) (CitaNotaInfo, error) {
 	var info CitaNotaInfo
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT ci."id"::text, ci."profesionalId"::text, ci."pacienteId"::text, ci."estado"::text
 FROM "Cita" ci
 JOIN "Clinica" c ON c."id" = ci."clinicaId"
@@ -97,7 +97,7 @@ WHERE c."identificador" = $1 AND ci."id" = $2`,
 
 func (s *pgNotaStore) ProfesionalDeUsuario(ctx context.Context, clinicaIdent, usuarioID string) (string, error) {
 	var profesionalID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."id"::text
 FROM "Profesional" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
@@ -114,7 +114,7 @@ WHERE c."identificador" = $1 AND p."usuarioId" = $2`,
 }
 
 func (s *pgNotaStore) CreateNota(ctx context.Context, clinicaIdent, citaID, profesionalID, contenido string, actor AuditActor) (NotaClinica, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return NotaClinica{}, fmt.Errorf("abrir transacción: %w", err)
 	}
@@ -163,7 +163,7 @@ RETURNING "id"::text, "citaId"::text, "profesionalId"::text, "contenido", "cread
 
 func (s *pgNotaStore) GetNota(ctx context.Context, clinicaIdent, citaID string) (NotaClinica, error) {
 	var n NotaClinica
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT n."id"::text, n."citaId"::text, n."profesionalId"::text, n."contenido", n."creadoEn"
 FROM "NotaClinica" n
 JOIN "Clinica" c ON c."id" = n."clinicaId"

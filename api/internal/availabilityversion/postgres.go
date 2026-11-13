@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"medicitas/api/internal/availabilitycache"
+	"medicitas/api/internal/rlsctx"
 )
 
 // PostgresResolver implementa availabilitycache.AgendaVersionResolver sobre
@@ -43,7 +44,7 @@ func (r *PostgresResolver) Resolve(ctx context.Context, clinicaIdent, profesiona
 	}
 
 	var version int64
-	err := r.db.QueryRowContext(ctx,
+	err := rlsctx.Pick(ctx, r.db).QueryRowContext(ctx,
 		`SELECT av."version"
 		 FROM "AgendaVersion" av
 		 JOIN "Clinica" c ON c."id" = av."clinicaId"

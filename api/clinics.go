@@ -83,7 +83,7 @@ var (
 // ancla con la FK compuesta (clinicaId, id) y el trigger validarUsuarioClinica
 // exige clinicaId para todo rol que no sea adm_plataforma.
 func (s *pgClinicStore) CreateClinicaConAdmin(ctx context.Context, c NewClinic, adminIDPSub, adminUsername string) (Clinic, ClinicAdmin, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return Clinic{}, ClinicAdmin{}, fmt.Errorf("abrir transacción: %w", err)
 	}

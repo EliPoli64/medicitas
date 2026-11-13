@@ -23,6 +23,7 @@ type DomainUser struct {
 	IdpSub               string  `json:"idpSub"`
 	Activo               bool    `json:"activo"`
 	ClinicaIdentificador *string `json:"clinicaIdentificador"` // null si adm plataforma
+	ClinicaID            *string `json:"-"`                    // uuid; alimenta app.clinica_id
 	RolCodigo            string  `json:"rolCodigo"`            // código BD (adm_plataforma, …)
 }
 
@@ -42,7 +43,7 @@ func newPGUserStore(database *sql.DB) *pgUserStore {
 func (s *pgUserStore) FindByIdpSub(ctx context.Context, idpSub string) (DomainUser, error) {
 	const q = `
 SELECT u."id"::text, u."idpSub", u."activo",
-       c."identificador", r."codigo"
+       c."identificador", r."codigo", u."clinicaId"::text
 FROM "Usuario" u
 LEFT JOIN "Clinica" c ON c."id" = u."clinicaId"
 JOIN "Rol" r ON r."id" = u."rolId"
@@ -50,8 +51,9 @@ WHERE u."idpSub" = $1`
 
 	var u DomainUser
 	var clinica sql.NullString
-	err := s.db.QueryRowContext(ctx, q, idpSub).Scan(
-		&u.UsuarioID, &u.IdpSub, &u.Activo, &clinica, &u.RolCodigo,
+	var clinicaID sql.NullString
+	err := dbq(ctx, s.db).QueryRowContext(ctx, q, idpSub).Scan(
+		&u.UsuarioID, &u.IdpSub, &u.Activo, &clinica, &u.RolCodigo, &clinicaID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DomainUser{}, errUserNotFound
@@ -62,6 +64,10 @@ WHERE u."idpSub" = $1`
 	if clinica.Valid {
 		s := clinica.String
 		u.ClinicaIdentificador = &s
+	}
+	if clinicaID.Valid {
+		id := clinicaID.String
+		u.ClinicaID = &id
 	}
 	if !u.Activo {
 		return u, errUserInactive
@@ -84,6 +90,12 @@ func loadDomainUser() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "almacén de usuarios no disponible"})
 			return
 		}
+		release, err := bindRLS(c, id.Sub)
+		if err != nil {
+			abortRLS(c)
+			return
+		}
+		defer release()
 		du, err := userStore.FindByIdpSub(c.Request.Context(), id.Sub)
 		if errors.Is(err, errUserNotFound) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "usuario no registrado en el sistema"})
@@ -95,6 +107,10 @@ func loadDomainUser() gin.HandlerFunc {
 		}
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "no se pudo resolver el usuario"})
+			return
+		}
+		if err := applyTenantGUC(c.Request.Context(), du); err != nil {
+			abortRLS(c)
 			return
 		}
 		if err := assertClinicaClaimAligned(id, du); err != nil {

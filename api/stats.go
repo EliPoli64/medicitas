@@ -44,7 +44,7 @@ func newPGStatsStore(database *sql.DB) *pgStatsStore {
 
 func (s *pgStatsStore) ZonaHoraria(ctx context.Context, clinicaIdent string) (string, error) {
 	var zona string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT "zonaHoraria" FROM "Clinica" WHERE "identificador" = $1`, clinicaIdent,
 	).Scan(&zona)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -58,7 +58,7 @@ SELECT "zonaHoraria" FROM "Clinica" WHERE "identificador" = $1`, clinicaIdent,
 
 func (s *pgStatsStore) ProfesionalUsuarioID(ctx context.Context, clinicaIdent, profesionalID string) (string, error) {
 	var usuarioID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."usuarioId"::text
 FROM "Profesional" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
@@ -76,7 +76,7 @@ WHERE c."identificador" = $1 AND p."id" = $2`,
 
 func (s *pgStatsStore) ProfesionalIDByUsuarioID(ctx context.Context, clinicaIdent, usuarioID string) (string, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."id"::text
 FROM "Profesional" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
@@ -107,7 +107,7 @@ GROUP BY ci."estado"`
 	if profesionalID != nil {
 		prof = *profesionalID
 	}
-	rows, err := s.db.QueryContext(ctx, q, clinicaIdent, inicio.UTC(), finExclusive.UTC(), prof)
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, q, clinicaIdent, inicio.UTC(), finExclusive.UTC(), prof)
 	if err != nil {
 		return nil, fmt.Errorf("contar citas: %w", err)
 	}

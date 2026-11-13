@@ -4,7 +4,8 @@
 # Realm Keycloak versionado en id-provider/import/medicitas-realm.json.
 #
 # Auth JWT cableada en api (KC_ISSUER_URL / KC_JWKS_URL).
-# RF7 lee Redis cuando está arriba. Pendiente de endurecimiento: RLS/GRANTs.
+# RF7 lee Redis cuando está arriba.
+# La API entra como medicitas_app (RLS). Seed y Keycloak siguen como superusuario.
 
 services:
   db:
@@ -106,8 +107,8 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: 5432
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_USER: ${APP_DB_USER:-medicitas_app}
+      DB_PASSWORD: ${APP_DB_PASSWORD:-medicitas_app}
       DB_NAME: ${POSTGRES_DB}
       REDIS_HOST: redis
       REDIS_PORT: 6379

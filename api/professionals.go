@@ -71,7 +71,7 @@ func newPGProfessionalStore(database *sql.DB) *pgProfessionalStore {
 }
 
 func (s *pgProfessionalStore) CreateProfesional(ctx context.Context, clinicaIdent, usuarioID, especialidadID string) (Professional, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return Professional{}, fmt.Errorf("abrir transacción: %w", err)
 	}
@@ -143,7 +143,7 @@ RETURNING "id"::text, "usuarioId"::text, "especialidadId"::text, "activo",
 }
 
 func (s *pgProfessionalStore) ListProfesionales(ctx context.Context, clinicaIdent string) ([]Professional, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT p."id"::text, p."usuarioId"::text, u."idpSub", p."especialidadId"::text,
        e."nombre", p."activo"
 FROM "Profesional" p
@@ -179,7 +179,7 @@ ORDER BY e."nombre", u."idpSub"`,
 	}
 
 	// Servicios habilitados de todos los profesionales en una sola consulta.
-	srvRows, err := s.db.QueryContext(ctx, `
+	srvRows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT ps."profesionalId"::text, s."id"::text, s."nombre", s."duracionMinutos"
 FROM "ProfesionalServicio" ps
 JOIN "Clinica" c  ON c."id" = ps."clinicaId"
@@ -227,7 +227,7 @@ func (s *pgProfessionalStore) GetProfesional(ctx context.Context, clinicaIdent, 
 
 func (s *pgProfessionalStore) SetProfesionalActivo(ctx context.Context, clinicaIdent, id string, activo bool) (Professional, error) {
 	var p Professional
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Profesional" p
 SET "activo" = $3
 FROM "Clinica" c
@@ -252,7 +252,7 @@ RETURNING p."id"::text, p."usuarioId"::text, p."especialidadId"::text, p."activo
 // en una transacción (RF4). Valida cada servicio contra la especialidad del
 // profesional antes de insertar; el trigger del motor vuelve a comprobarlo.
 func (s *pgProfessionalStore) SetServicios(ctx context.Context, clinicaIdent, profesionalID string, servicioIDs []string) ([]ProfessionalService, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf("abrir transacción: %w", err)
 	}

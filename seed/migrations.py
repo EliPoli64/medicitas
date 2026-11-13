@@ -46,7 +46,14 @@ def _migrations_table_exists(cur: psycopg.Cursor) -> bool:
 
 
 def _apply_sql_file(path: Path) -> None:
-    """Ejecuta un archivo SQL con psql, deteniéndose ante cualquier error."""
+    """Ejecuta un archivo SQL con psql, deteniéndose ante cualquier error.
+
+    CREATE ROLE / ALTER ROLE no pueden ir dentro de un bloque BEGIN, así que
+    esos archivos (03_rls.sql) no usan --single-transaction. El resto sí:
+    si una sentencia falla, se revierte el archivo entero.
+    """
+    sql = path.read_bytes()
+    transactional = b"CREATE ROLE" not in sql and b"ALTER ROLE" not in sql
     env = os.environ.copy()
     env["PGPASSWORD"] = _required_env("DB_PASSWORD")
     cmd = [
@@ -57,9 +64,10 @@ def _apply_sql_file(path: Path) -> None:
         "-d", _required_env("DB_NAME"),
         "-v", "ON_ERROR_STOP=1",
         "-X",  # no leer ~/.psqlrc
-        "--single-transaction",  # rollback completo si una sentencia falla
         "-f", str(path),
     ]
+    if transactional:
+        cmd.insert(-2, "--single-transaction")
     result = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(

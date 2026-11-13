@@ -12,7 +12,7 @@ Convenciones del esquema:
   funciones auxiliares en `app`.
 - Todas las tablas de negocio llevan `clinicaId` y usan FKs compuestas por
   clínica para impedir referencias entre tenants.
-- El aislamiento se reforzará con RLS en una migración posterior.
+- El aislamiento de tenant se refuerza con RLS ([`db/migrations/03_rls.sql`](../db/migrations/03_rls.sql), [`docs/rls.md`](rls.md)). La columna `clinicaId` sigue siendo la estrategia principal.
 
 ## Entidades
 

@@ -36,12 +36,14 @@ flowchart TB
     rf9to13[RF9_13_ciclo_cita]
   end
 
-  subgraph nextUp [Siguiente]
-    extra[RLS_o_modulo_extra]
+  subgraph extra [Modulo_extra]
+    rls[RLS_segunda_estrategia]
   end
 
   API --- identity
   API --- dominio
+  API -->|"app.clinica_id"| rls
+  rls --> PG
   rf9to13 -->|"INSERT_UPDATE_reprogramarCita"| PG
   rf9to13 -->|"InvalidateAgenda"| RD
   rf1to8 --> PG
@@ -75,8 +77,8 @@ Concurrencia RF9: **READ COMMITTED** + `EXCLUDE` GiST. RF10: `app.reprogramarCit
 | RF14–RF16, RF15, RF18–RF21 | Hecho |
 | Redis / I8 en RF7 | Hecho |
 | **RF9–RF13 ciclo + carrera** | **Hecho** |
-| Módulo extra (p. ej. RLS) | Pendiente |
+| Módulo extra: RLS | Hecho |
 
 ## Defensa en una frase
 
-Compose multi-servicio; Postgres como verdad; JWT multi-tenant; reserva concurrente con una ganadora; caché de disponibilidad invalidada al mutar la agenda.
+Compose multi-servicio; Postgres como verdad; JWT multi-tenant con RLS encima de `clinicaId`; reserva concurrente con una ganadora; caché de disponibilidad invalidada al mutar la agenda.

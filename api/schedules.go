@@ -73,7 +73,7 @@ func newPGScheduleStore(database *sql.DB) *pgScheduleStore {
 
 func (s *pgScheduleStore) ProfesionalUsuarioID(ctx context.Context, clinicaIdent, profesionalID string) (string, error) {
 	var usuarioID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."usuarioId"::text
 FROM "Profesional" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
@@ -91,7 +91,7 @@ WHERE c."identificador" = $1 AND p."id" = $2`,
 
 func (s *pgScheduleStore) HorarioProfesionalID(ctx context.Context, clinicaIdent, horarioID string) (string, error) {
 	var profesionalID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT h."profesionalId"::text
 FROM "HorarioAtencion" h
 JOIN "Clinica" c ON c."id" = h."clinicaId"
@@ -142,7 +142,7 @@ WHERE c."identificador" = $1 AND h."profesionalId" = $2`
 	}
 	q += ` ORDER BY h."diaSemana", h."horaInicio"`
 
-	rows, err := s.db.QueryContext(ctx, q, clinicaIdent, profesionalID)
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, q, clinicaIdent, profesionalID)
 	if err != nil {
 		return nil, fmt.Errorf("listar horarios: %w", err)
 	}
@@ -167,7 +167,7 @@ func (s *pgScheduleStore) CreateHorario(ctx context.Context, clinicaIdent, profe
 	if in.VigenteHasta != nil {
 		hasta = *in.VigenteHasta
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := dbq(ctx, s.db).QueryRowContext(ctx, `
 INSERT INTO "HorarioAtencion" (
   "clinicaId", "profesionalId", "diaSemana",
   "horaInicio", "horaFin", "vigenteDesde", "vigenteHasta", "activo"
@@ -198,7 +198,7 @@ RETURNING "id"::text, "profesionalId"::text, "diaSemana",
 
 func (s *pgScheduleStore) UpdateHorario(ctx context.Context, clinicaIdent, horarioID string, patch SchedulePatch) (Schedule, error) {
 	// Leer actual y aplicar patch en memoria, luego UPDATE completo de campos mutables.
-	row := s.db.QueryRowContext(ctx, `
+	row := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT h."id"::text, h."profesionalId"::text, h."diaSemana",
        h."horaInicio", h."horaFin", h."vigenteDesde"::text, h."vigenteHasta"::text, h."activo"
 FROM "HorarioAtencion" h
@@ -239,7 +239,7 @@ WHERE c."identificador" = $1 AND h."id" = $2`,
 	if cur.VigenteHasta != nil {
 		hasta = *cur.VigenteHasta
 	}
-	row = s.db.QueryRowContext(ctx, `
+	row = dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "HorarioAtencion" h SET
   "diaSemana" = $3,
   "horaInicio" = $4::time,

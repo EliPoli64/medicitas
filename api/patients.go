@@ -115,7 +115,7 @@ WHERE c."identificador" = $1
   AND p."activo" = true
 ORDER BY p."nombre"`
 
-	rows, err := s.db.QueryContext(ctx, q, clinicaIdentificador)
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, q, clinicaIdentificador)
 	if err != nil {
 		return nil, fmt.Errorf("listar pacientes: %w", err)
 	}
@@ -150,7 +150,7 @@ WHERE c."identificador" = $1 AND cp."pacienteId" = $2`
 	if tx != nil {
 		rows, err = tx.QueryContext(ctx, q, clinicaIdent, pacienteID)
 	} else {
-		rows, err = s.db.QueryContext(ctx, q, clinicaIdent, pacienteID)
+		rows, err = dbq(ctx, s.db).QueryContext(ctx, q, clinicaIdent, pacienteID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("listar contactos: %w", err)
@@ -170,7 +170,7 @@ WHERE c."identificador" = $1 AND cp."pacienteId" = $2`
 
 func (s *pgPatientStore) GetPaciente(ctx context.Context, clinicaIdent, id string) (Patient, error) {
 	var p Patient
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."id"::text, p."identificacion", p."nombre",
        p."fechaNacimiento"::text, p."activo"
 FROM "Paciente" p
@@ -246,7 +246,7 @@ RETURNING "id"::text, "pacienteId"::text, $6, (SELECT "nombre" FROM "TipoContact
 }
 
 func (s *pgPatientStore) CreatePaciente(ctx context.Context, clinicaIdent, identificacion, nombre, fechaNac string, contactos []ContactInput, actor AuditActor) (Patient, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return Patient{}, fmt.Errorf("abrir transacción: %w", err)
 	}
@@ -310,7 +310,7 @@ func (s *pgPatientStore) UpdatePaciente(ctx context.Context, clinicaIdent, id st
 	}
 
 	var p Patient
-	err = s.db.QueryRowContext(ctx, `
+	err = dbq(ctx, s.db).QueryRowContext(ctx, `
 UPDATE "Paciente" p SET
   "identificacion" = $3,
   "nombre" = $4,
@@ -346,7 +346,7 @@ func (s *pgPatientStore) CreateContacto(ctx context.Context, clinicaIdent, pacie
 	if _, err := s.GetPaciente(ctx, clinicaIdent, pacienteID); err != nil {
 		return PatientContact{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return PatientContact{}, fmt.Errorf("abrir transacción: %w", err)
 	}
@@ -370,7 +370,7 @@ func (s *pgPatientStore) CreateContacto(ctx context.Context, clinicaIdent, pacie
 }
 
 func (s *pgPatientStore) UpdateContacto(ctx context.Context, clinicaIdent, contactoID string, patch ContactPatch, actor AuditActor) (PatientContact, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginDB(ctx, s.db)
 	if err != nil {
 		return PatientContact{}, fmt.Errorf("abrir transacción: %w", err)
 	}
@@ -460,7 +460,7 @@ RETURNING cp."id"::text, cp."pacienteId"::text,
 func (s *pgPatientStore) ListCitasByPaciente(ctx context.Context, clinicaIdent, pacienteID string) ([]PatientAppointment, error) {
 	// Asegura que el paciente existe en la clínica (404 vs lista vacía).
 	var ok bool
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT true FROM "Paciente" p
 JOIN "Clinica" c ON c."id" = p."clinicaId"
 WHERE c."identificador" = $1 AND p."id" = $2`,
@@ -473,7 +473,7 @@ WHERE c."identificador" = $1 AND p."id" = $2`,
 		return nil, fmt.Errorf("verificar paciente: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT ci."id"::text, ci."inicio", ci."fin", ci."estado"::text,
        ci."profesionalId"::text, ci."servicioId"::text, ci."duracionMinutos"
 FROM "Cita" ci

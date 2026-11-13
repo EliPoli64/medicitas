@@ -76,7 +76,7 @@ func scanBlock(scanner interface {
 
 func (s *pgBlockStore) BloqueoProfesionalID(ctx context.Context, clinicaIdent, bloqueoID string) (string, error) {
 	var profesionalID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT b."profesionalId"::text
 FROM "Bloqueo" b
 JOIN "Clinica" c ON c."id" = b."clinicaId"
@@ -112,7 +112,7 @@ WHERE c."identificador" = $1 AND b."profesionalId" = $2`
 	}
 	q += ` ORDER BY b."inicio"`
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listar bloqueos: %w", err)
 	}
@@ -130,7 +130,7 @@ WHERE c."identificador" = $1 AND b."profesionalId" = $2`
 }
 
 func (s *pgBlockStore) listConflictos(ctx context.Context, clinicaIdent, profesionalID string, inicio, fin time.Time) ([]BlockConflict, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT ci."id"::text, ci."inicio", ci."fin", ci."estado"::text, ci."pacienteId"::text
 FROM "Cita" ci
 JOIN "Clinica" c ON c."id" = ci."clinicaId"
@@ -161,7 +161,7 @@ ORDER BY ci."inicio"`,
 }
 
 func (s *pgBlockStore) CreateBloqueo(ctx context.Context, clinicaIdent, profesionalID, creadoPorUsuarioID string, inicio, fin time.Time, motivo string) (Block, []BlockConflict, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := dbq(ctx, s.db).QueryRowContext(ctx, `
 INSERT INTO "Bloqueo" (
   "clinicaId", "profesionalId", "inicio", "fin", "motivo", "creadoPorUsuarioId"
 ) VALUES (
@@ -191,7 +191,7 @@ RETURNING "id"::text, "profesionalId"::text, "inicio", "fin",
 
 func (s *pgBlockStore) DeleteBloqueo(ctx context.Context, clinicaIdent, bloqueoID string) (string, error) {
 	var profesionalID string
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 DELETE FROM "Bloqueo" b
 USING "Clinica" c
 WHERE c."id" = b."clinicaId" AND c."identificador" = $1 AND b."id" = $2

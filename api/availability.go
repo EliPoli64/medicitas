@@ -264,7 +264,7 @@ func newPGDisponibilidadStore(database *sql.DB) *pgDisponibilidadStore {
 
 func (s *pgDisponibilidadStore) ZonaHoraria(ctx context.Context, clinicaIdent string) (string, error) {
 	var zona string
-	err := s.db.QueryRowContext(ctx,
+	err := dbq(ctx, s.db).QueryRowContext(ctx,
 		`SELECT c."zonaHoraria" FROM "Clinica" c WHERE c."identificador" = $1`,
 		clinicaIdent,
 	).Scan(&zona)
@@ -277,7 +277,7 @@ func (s *pgDisponibilidadStore) ZonaHoraria(ctx context.Context, clinicaIdent st
 func (s *pgDisponibilidadStore) ServicioDispo(ctx context.Context, clinicaIdent, servicioID string) (int, bool, error) {
 	var duracion int
 	var activo bool
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT s."duracionMinutos", s."activo"
 FROM "Servicio" s
 JOIN "Clinica" c ON c."id" = s."clinicaId"
@@ -295,7 +295,7 @@ WHERE c."identificador" = $1 AND s."id" = $2`,
 
 func (s *pgDisponibilidadStore) ProfesionalDispo(ctx context.Context, clinicaIdent, profesionalID string) (ProfesionalDispo, error) {
 	var p ProfesionalDispo
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT p."id"::text, u."idpSub", e."nombre", p."activo"
 FROM "Profesional" p
 JOIN "Clinica" c      ON c."id" = p."clinicaId"
@@ -315,7 +315,7 @@ WHERE c."identificador" = $1 AND p."id" = $2`,
 
 func (s *pgDisponibilidadStore) ProfesionalHabilitado(ctx context.Context, clinicaIdent, profesionalID, servicioID string) (bool, error) {
 	var ok bool
-	err := s.db.QueryRowContext(ctx, `
+	err := dbq(ctx, s.db).QueryRowContext(ctx, `
 SELECT EXISTS (
     SELECT 1
     FROM "ProfesionalServicio" ps
@@ -333,7 +333,7 @@ SELECT EXISTS (
 }
 
 func (s *pgDisponibilidadStore) ProfesionalesDelServicio(ctx context.Context, clinicaIdent, servicioID string) ([]ProfesionalDispo, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT p."id"::text, u."idpSub", e."nombre", p."activo"
 FROM "ProfesionalServicio" ps
 JOIN "Clinica" c      ON c."id" = ps."clinicaId"
@@ -365,7 +365,7 @@ func (s *pgDisponibilidadStore) DatosAgenda(ctx context.Context, clinicaIdent, p
 
 	// Horarios activos cuya vigencia toca el rango.
 	// Índice: HorarioAtencionProfesionalIdx (clinicaId, profesionalId, diaSemana) WHERE activo.
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT h."diaSemana", h."horaInicio", h."horaFin", h."vigenteDesde"::text, h."vigenteHasta"::text
 FROM "HorarioAtencion" h
 JOIN "Clinica" c ON c."id" = h."clinicaId"
@@ -414,7 +414,7 @@ WHERE c."identificador" = $1
 
 	// Bloqueos que tocan el rango.
 	// Índice: BloqueoProfesionalRangoIdx (clinicaId, profesionalId, inicio, fin).
-	bRows, err := s.db.QueryContext(ctx, `
+	bRows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT b."inicio", b."fin"
 FROM "Bloqueo" b
 JOIN "Clinica" c ON c."id" = b."clinicaId"
@@ -447,7 +447,7 @@ WHERE c."identificador" = $1
 	// rango y basta acotar "inicio". Así la consulta se sirve por completo de
 	// CitaProfesionalInicioIdx (rango cerrado sobre la tercera columna).
 	// Índice: CitaProfesionalInicioIdx (clinicaId, profesionalId, inicio) WHERE estado='reservada'.
-	cRows, err := s.db.QueryContext(ctx, `
+	cRows, err := dbq(ctx, s.db).QueryContext(ctx, `
 SELECT ci."inicio", ci."fin"
 FROM "Cita" ci
 JOIN "Clinica" c ON c."id" = ci."clinicaId"
