@@ -35,8 +35,8 @@ const (
 	redisPingTimeout  = 2 * time.Second
 )
 
-// availabilityCache queda disponible para los handlers de RF7/RF8 en una etapa
-// posterior. Mientras sea nil, la API debe calcular desde PostgreSQL.
+// availabilityCache lo usan los handlers de RF7. Si es nil (Redis caído al
+// arrancar), la API calcula desde PostgreSQL.
 var availabilityCache *availabilitycache.Cache
 
 // availabilityCacheRuntime agrupa la caché con el store que la respalda para

@@ -188,9 +188,9 @@ func main() {
 	notaStore = newPGNotaStore(db)
 	auditStore = newPGAuditStore(db)
 
-	// Caché de disponibilidad (RF7/RF8). Todavía no se usa en los handlers.
-	// Una configuración inválida es fatal; una caída de Redis solo deshabilita
-	// la caché y la API sigue sirviendo desde PostgreSQL.
+	// Caché de disponibilidad (RF7). Los handlers consultan GetOrLoad si Redis
+	// arrancó; si no, calculan desde PostgreSQL. Config inválida es fatal.
+	// Una caída de Redis solo deshabilita la caché.
 	if cacheRuntime, err := newAvailabilityCacheFromEnv(context.Background(), db); err != nil {
 		if isAvailabilityCacheConfigError(err) {
 			log.Fatalf("redis: configuración inválida: %v", err)

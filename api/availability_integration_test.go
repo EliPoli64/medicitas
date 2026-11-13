@@ -313,8 +313,8 @@ func espaciosHoraLocal(t *testing.T, raw string) []string {
 	return horas
 }
 
-// testDB abre una conexión directa a Postgres para insertar la cita de la
-// prueba (RF9 aún no existe; el INSERT ejercita los triggers del motor).
+// testDB abre Postgres para insertar una cita y comprobar que RF7 coincide
+// con los triggers del motor (el INSERT no pasa por la API a propósito).
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	host := envOr("DB_HOST", "localhost")
@@ -322,8 +322,7 @@ func testDB(t *testing.T) *sql.DB {
 	user := envOr("DB_USER", envOr("POSTGRES_USER", "medicitas"))
 	pass := envOr("DB_PASSWORD", envOr("POSTGRES_PASSWORD", "cambiar_en_local"))
 	name := envOr("DB_NAME", envOr("POSTGRES_DB", "medicitas"))
-	conn, err := sql.Open("pgx",
-		fmt.Sprintf("postgres://%s:%s@%s:%s/%s", user, pass, host, port, name))
+	conn, err := sql.Open("pgx", postgresDSN(user, pass, host, port, name))
 	if err != nil {
 		t.Fatal(err)
 	}

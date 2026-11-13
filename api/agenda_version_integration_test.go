@@ -14,6 +14,8 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -30,7 +32,7 @@ func agendaVersionDB(t testing.TB) *sql.DB {
 	pass := envOr("DB_PASSWORD", envOr("POSTGRES_PASSWORD", "cambiar_en_local"))
 	name := envOr("DB_NAME", envOr("POSTGRES_DB", "medicitas"))
 
-	conn, err := sql.Open("pgx", fmt.Sprintf("postgres://%s:%s@%s:%s/%s", user, pass, host, port, name))
+	conn, err := sql.Open("pgx", postgresDSN(user, pass, host, port, name))
 	if err != nil {
 		t.Fatalf("abrir postgres: %v", err)
 	}
@@ -38,6 +40,19 @@ func agendaVersionDB(t testing.TB) *sql.DB {
 		t.Fatalf("conexión a postgres: %v", err)
 	}
 	return conn
+}
+
+func postgresDSN(user, pass, host, port, name string) string {
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, pass),
+		Host:   net.JoinHostPort(host, port),
+		Path:   "/" + name,
+	}
+	q := u.Query()
+	q.Set("sslmode", "disable")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // versionDeAgenda lee la versión autoritativa de una agenda.

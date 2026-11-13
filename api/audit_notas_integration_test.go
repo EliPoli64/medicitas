@@ -173,7 +173,7 @@ func TestIntegrationRF15RF18RF19NotasBitacora(t *testing.T) {
 		pacIDs[i] = pacOut.Paciente.ID
 	}
 
-	// --- Citas atendidas (insert + desenlace vía SQL: RF9/RF12 aún no existen) ---
+	// --- Citas atendidas (insert + desenlace vía SQL para aislar notas de RF12) ---
 	bdb := testDB(t)
 	defer bdb.Close()
 

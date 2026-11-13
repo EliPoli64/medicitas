@@ -4,8 +4,8 @@ Reparto acordado en la práctica (Keycloak / Redis / semilla).
 
 | Quién | Encargo |
 |-------|---------|
-| **Matías** | Keycloak + identidad en API: realm, JWT/JWKS, matriz RF17, `sub`→`"Usuario"`, `GET /pacientes` (I5). Docs: [`keycloak.md`](keycloak.md) |
-| **Cristian** | Redis: caché de disponibilidad, invalidación, I8 (paquete listo; cablear a RF7/API) |
+| **Matías** | Identidad + API de dominio (RF1–RF6, RF9–RF21, notas/bitácora). Docs: [`keycloak.md`](keycloak.md) |
+| **Cristian** | Redis / I8: caché de disponibilidad cableada a RF7, `AgendaVersion`, invalidación, benchmark |
 | **Elías** | Schema SQL + seeder Python (BD + users canónicos en Keycloak, escribe `idpSub`) |
 
 ## Tercios funcionales (referencia de la spec)
@@ -19,12 +19,12 @@ Reparto acordado en la práctica (Keycloak / Redis / semilla).
 ### B — Identidad y catálogo
 
 - Identidad delegada (rúbrica): **cerrada al 100 %** (Matías) — ver checklist en [`keycloak.md`](keycloak.md).
-- RF1–RF6 y resto de RF14 (alta/baja pacientes, catálogo): **pendiente** en API.
+- RF1–RF6, RF14 y catálogo: **hecho** en API.
 
 ### C — Citas, concurrencia y caché
 
-- RF7–RF13, RF15–RF21, prueba de carrera: **pendiente**.
-- Redis / I8: librería **lista** (Cristian); integración con endpoints **pendiente**.
+- RF7–RF13, RF15–RF21, prueba de carrera: **hecho** en API.
+- Redis / I8: **cableado** a RF7 (Cristian) e invalidado al mutar agenda/citas.
 
 ## Módulo extra (obligatorio para 3)
 

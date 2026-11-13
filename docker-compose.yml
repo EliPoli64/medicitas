@@ -4,7 +4,7 @@
 # Realm Keycloak versionado en id-provider/import/medicitas-realm.json.
 #
 # Auth JWT cableada en api (KC_ISSUER_URL / KC_JWKS_URL).
-# TODO: integración RF7 con Redis; dominio de citas; RLS/GRANTs.
+# RF7 lee Redis cuando está arriba. Pendiente de endurecimiento: RLS/GRANTs.
 
 services:
   db:
