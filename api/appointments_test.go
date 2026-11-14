@@ -42,7 +42,7 @@ func (f *fakeAppointmentStore) Reservar(_ context.Context, clinicaIdent, pacient
 		a = Appointment{
 			ID: "cita-1", PacienteID: pacienteID, ProfesionalID: profesionalID,
 			ServicioID: servicioID, Inicio: inicio.UTC().Format(time.RFC3339),
-			Fin: inicio.Add(30 * time.Minute).UTC().Format(time.RFC3339),
+			Fin:             inicio.Add(30 * time.Minute).UTC().Format(time.RFC3339),
 			DuracionMinutos: 30, Estado: "reservada",
 		}
 	}
@@ -88,8 +88,8 @@ func (f *fakeAppointmentStore) Reprogramar(_ context.Context, clinicaIdent, cita
 	nueva := Appointment{
 		ID: "cita-nueva", PacienteID: origen.PacienteID,
 		ProfesionalID: origen.ProfesionalID, ServicioID: origen.ServicioID,
-		Inicio: nuevoInicio.UTC().Format(time.RFC3339),
-		Fin:    nuevoInicio.Add(30 * time.Minute).UTC().Format(time.RFC3339),
+		Inicio:          nuevoInicio.UTC().Format(time.RFC3339),
+		Fin:             nuevoInicio.Add(30 * time.Minute).UTC().Format(time.RFC3339),
 		DuracionMinutos: 30, Estado: "reservada", CitaOrigenID: citaID,
 	}
 	if nuevoProfesionalID != nil && *nuevoProfesionalID != "" {

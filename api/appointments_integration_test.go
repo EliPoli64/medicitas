@@ -2,9 +2,10 @@
 
 package main
 
-// Integración RF9–RF13: reserva, carrera, I8, ciclo (reprogramar/cancelar/desenlace).
+// Integración RF9–RF13: reserva, carrera, I8, ciclo (reprogramar/cancelar/desenlace)
+// e invariantes I2 (solape del paciente) e I3 (horario/bloqueos).
 //
-//	go test -tags=integration -count=1 -run 'RF9|RF10|Carrera|I8|Ciclo' ./...
+//	go test -tags=integration -count=1 -run 'RF9|RF10|Carrera|I8|Ciclo|I2|I3' ./...
 
 import (
 	"context"
@@ -312,6 +313,10 @@ func TestIntegrationRF10a13CicloCita(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if reserved.Cita.Estado != "reservada" || reserved.Cita.DuracionMinutos != 30 {
+		t.Fatalf("I4: cita reservada=%+v (la duración la fija el servicio)", reserved.Cita)
+	}
+
 	code, raw = postJSON(t, client, apiBase+"/citas/"+reserved.Cita.ID+"/reprogramar", fx.RecepTok,
 		fmt.Sprintf(`{"inicio":%q}`, inicio10.Format(time.RFC3339)))
 	if code != http.StatusOK {
@@ -324,8 +329,9 @@ func TestIntegrationRF10a13CicloCita(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &repro); err != nil {
 		t.Fatal(err)
 	}
-	if repro.CitaAnteriorID != reserved.Cita.ID || repro.Cita.Estado != "reservada" || repro.Cita.CitaOrigenID != reserved.Cita.ID {
-		t.Fatalf("repro=%+v", repro)
+	if repro.CitaAnteriorID != reserved.Cita.ID || repro.Cita.Estado != "reservada" || repro.Cita.CitaOrigenID != reserved.Cita.ID ||
+		repro.Cita.DuracionMinutos != 30 {
+		t.Fatalf("I4/RF10: repro=%+v (reprogramar no altera la duración del servicio)", repro)
 	}
 
 	code, raw = getRaw(t, client, rf7, fx.RecepTok)
@@ -428,3 +434,149 @@ RETURNING "id"::text`,
 	}
 }
 
+// TestIntegrationI2PacienteSinSolape: I2 — un paciente no puede tener dos
+// citas vigentes solapadas dentro de la misma clínica, aunque sean con
+// profesionales distintos (EXCLUDE "CitaPacienteSinSolape").
+func TestIntegrationI2PacienteSinSolape(t *testing.T) {
+	apiBase, _, client, fx := setupRF9Fixtures(t)
+
+	// Segundo profesional con el mismo servicio y horario de lunes.
+	var esp struct {
+		Especialidades []Especialidad `json:"especialidades"`
+	}
+	code, raw := getRaw(t, client, apiBase+"/especialidades", fx.AdmTok)
+	if code != http.StatusOK {
+		t.Fatalf("especialidades = %d %s", code, raw)
+	}
+	if err := json.Unmarshal([]byte(raw), &esp); err != nil || len(esp.Especialidades) == 0 {
+		t.Fatalf("especialidades: %v %s", err, raw)
+	}
+	espID := esp.Especialidades[0].ID
+
+	dr2User := fx.DrUser + "-b"
+	if code, raw = postJSON(t, client, apiBase+"/usuarios", fx.AdmTok,
+		fmt.Sprintf(`{"username":%q,"password":"rf9pass12","rol":"profesional"}`, dr2User)); code != http.StatusCreated {
+		t.Fatalf("usuario dr2 = %d %s", code, raw)
+	}
+	var uOut struct {
+		Usuario AdminUser `json:"usuario"`
+	}
+	if err := json.Unmarshal([]byte(raw), &uOut); err != nil {
+		t.Fatal(err)
+	}
+	if code, raw = postJSON(t, client, apiBase+"/profesionales", fx.AdmTok,
+		fmt.Sprintf(`{"usuarioId":%q,"especialidadId":%q}`, uOut.Usuario.ID, espID)); code != http.StatusCreated {
+		t.Fatalf("profesional dr2 = %d %s", code, raw)
+	}
+	var profOut struct {
+		Profesional Professional `json:"profesional"`
+	}
+	if err := json.Unmarshal([]byte(raw), &profOut); err != nil {
+		t.Fatal(err)
+	}
+	prof2 := profOut.Profesional.ID
+	if code, raw = doJSONRaw(t, client, http.MethodPut,
+		apiBase+"/profesionales/"+prof2+"/servicios", fx.AdmTok,
+		fmt.Sprintf(`{"servicioIds":[%q]}`, fx.SvcID)); code != http.StatusOK {
+		t.Fatalf("habilitar servicio dr2 = %d %s", code, raw)
+	}
+	if code, raw = postJSON(t, client, apiBase+"/profesionales/"+prof2+"/horarios", fx.AdmTok,
+		`{"diaSemana":1,"horaInicio":"08:00","horaFin":"12:00","vigenteDesde":"2020-01-01"}`); code != http.StatusCreated {
+		t.Fatalf("horario dr2 = %d %s", code, raw)
+	}
+
+	// Cita vigente del paciente A con el profesional 1.
+	inicio08 := time.Date(fx.Lunes.Year(), fx.Lunes.Month(), fx.Lunes.Day(), 8, 0, 0, 0, fx.Loc)
+	if code, raw = postJSON(t, client, apiBase+"/citas", fx.RecepTok, fmt.Sprintf(
+		`{"pacienteId":%q,"profesionalId":%q,"servicioId":%q,"inicio":%q}`,
+		fx.PacienteA, fx.ProfID, fx.SvcID, inicio08.Format(time.RFC3339))); code != http.StatusCreated {
+		t.Fatalf("reservar A+prof1 = %d %s", code, raw)
+	}
+
+	// Mismo paciente, otro profesional, mismo hueco → 409 (I2).
+	if code, raw = postJSON(t, client, apiBase+"/citas", fx.RecepTok, fmt.Sprintf(
+		`{"pacienteId":%q,"profesionalId":%q,"servicioId":%q,"inicio":%q}`,
+		fx.PacienteA, prof2, fx.SvcID, inicio08.Format(time.RFC3339))); code != http.StatusConflict {
+		t.Fatalf("I2: solape del mismo paciente = %d want 409, body=%s", code, raw)
+	}
+
+	// Control: otro paciente con el segundo profesional en el mismo hueco → 201
+	// (el 409 anterior proviene del paciente, no del profesional).
+	if code, raw = postJSON(t, client, apiBase+"/citas", fx.RecepTok, fmt.Sprintf(
+		`{"pacienteId":%q,"profesionalId":%q,"servicioId":%q,"inicio":%q}`,
+		fx.PacienteB, prof2, fx.SvcID, inicio08.Format(time.RFC3339))); code != http.StatusCreated {
+		t.Fatalf("control paciente B = %d %s", code, raw)
+	}
+
+	// En la BD queda exactamente una cita vigente del paciente A en ese hueco.
+	db := testDB(t)
+	defer db.Close()
+	fin08 := inicio08.Add(30 * time.Minute)
+	var n int
+	if err := db.QueryRowContext(context.Background(), `
+SELECT count(*) FROM "Cita"
+WHERE "pacienteId" = $1 AND "estado" = 'reservada'
+  AND tstzrange("inicio", "fin", '[)') && tstzrange($2::timestamptz, $3::timestamptz, '[)')`,
+		fx.PacienteA, inicio08, fin08,
+	).Scan(&n); err != nil {
+		t.Fatalf("count I2: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("I2: citas vigentes del paciente en el hueco = %d want 1", n)
+	}
+}
+
+// TestIntegrationI3DentroDeHorarioYBloqueo: I3 — toda cita vigente cae dentro
+// del horario de atención y fuera de los bloqueos del profesional. La defensa
+// es el trigger validarCitaEnHorario; el handler la traduce a 400.
+func TestIntegrationI3DentroDeHorarioYBloqueo(t *testing.T) {
+	apiBase, _, client, fx := setupRF9Fixtures(t)
+
+	// Bloqueo del profesional (RF6): lunes 10:00–11:00.
+	if code, raw := postJSON(t, client, apiBase+"/profesionales/"+fx.ProfID+"/bloqueos", fx.AdmTok, fmt.Sprintf(
+		`{"inicio":%q,"fin":%q,"motivo":"permiso"}`,
+		time.Date(fx.Lunes.Year(), fx.Lunes.Month(), fx.Lunes.Day(), 10, 0, 0, 0, fx.Loc).Format(time.RFC3339),
+		time.Date(fx.Lunes.Year(), fx.Lunes.Month(), fx.Lunes.Day(), 11, 0, 0, 0, fx.Loc).Format(time.RFC3339),
+	)); code != http.StatusCreated {
+		t.Fatalf("bloqueo = %d %s", code, raw)
+	}
+
+	reservar := func(hora int) (int, string) {
+		inicio := time.Date(fx.Lunes.Year(), fx.Lunes.Month(), fx.Lunes.Day(), hora, 0, 0, 0, fx.Loc)
+		return postJSON(t, client, apiBase+"/citas", fx.RecepTok, fmt.Sprintf(
+			`{"pacienteId":%q,"profesionalId":%q,"servicioId":%q,"inicio":%q}`,
+			fx.PacienteA, fx.ProfID, fx.SvcID, inicio.Format(time.RFC3339)))
+	}
+
+	// Dentro de un bloqueo → rechazada.
+	if code, raw := reservar(10); code != http.StatusBadRequest {
+		t.Fatalf("I3: cita dentro de bloqueo = %d want 400, body=%s", code, raw)
+	}
+
+	// Fuera del horario de atención (20:00 > 12:00) → rechazada.
+	if code, raw := reservar(20); code != http.StatusBadRequest {
+		t.Fatalf("I3: cita fuera de horario = %d want 400, body=%s", code, raw)
+	}
+
+	// Control: un hueco dentro del horario y sin bloqueo sigue concediéndose.
+	if code, raw := reservar(9); code != http.StatusCreated {
+		t.Fatalf("I3: control 09:00 = %d %s", code, raw)
+	}
+
+	// En la BD no quedó ningún rastro de las dos rechazadas.
+	db := testDB(t)
+	defer db.Close()
+	var n int
+	if err := db.QueryRowContext(context.Background(), `
+SELECT count(*) FROM "Cita"
+WHERE "pacienteId" = $1 AND "estado" = 'reservada'
+  AND (("inicio" AT TIME ZONE 'America/Costa_Rica')::time >= '20:00'
+       OR ("inicio" AT TIME ZONE 'America/Costa_Rica')::time = '10:00')`,
+		fx.PacienteA,
+	).Scan(&n); err != nil {
+		t.Fatalf("count I3: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("I3: quedaron %d citas rechazadas insertadas", n)
+	}
+}
