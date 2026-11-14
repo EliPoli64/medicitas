@@ -4,7 +4,8 @@ Documento de revisión del modelo de datos implementado en [`db/migrations/01_sc
 
 **Alcance:** solo hallazgos. Este documento **no** aplica cambios al DDL.
 
-**Fecha de revisión:** 2026-10-31
+**Fecha de revisión original:** 2026-10-31
+**Última actualización:** 2026-11-14 (sincronización con DDL actual)
 
 ---
 
@@ -14,11 +15,11 @@ El esquema está **bien**. No hay errores graves de normalización ni relaciones
 
 Lo que aparece no son fallas típicas de “entidades mal armadas”, sino:
 
-1. Huecos de integridad que el motor aún no cierra del todo.
-2. Documentación desfasada respecto al SQL real.
-3. Entregables del proyecto todavía pendientes (semilla, roles DB/RLS), que no invalidan el ER.
+1. Huecos de integridad que el motor ya cierra en la versión actual del DDL (ver Hallazgos actualizados).
+2. Documentación desfasada respecto al SQL real, hoy en proceso de sincronización.
+3. Entregables del proyecto implementados (semilla, roles DB/RLS, RLS como segunda estrategia).
 
-Fuente de verdad del modelo: **`01_schema.sql`**. El ER en `esquema-er.md` está alineado. `modelo-datos.md` y el `README` van atrasados.
+Fuente de verdad del modelo: **`01_schema.sql`**. El ER en `esquema-er.md` está alineado. `modelo-datos.md` y el `README` se actualizaron para reflejar el esquema actual.
 
 ---
 
@@ -30,8 +31,8 @@ Fuente de verdad del modelo: **`01_schema.sql`**. El ER en `esquema-er.md` está
 | Esquemas | `public` (negocio), `app` (funciones de trigger), `ops` (técnico) |
 | Enum | `EstadoCita`: reservada, atendida, ausente, cancelada, reprogramada |
 | Tablas de negocio | Rol, TipoContacto, Especialidad, Clinica, Usuario, Profesional, Servicio, ProfesionalServicio, HorarioAtencion, Bloqueo, Paciente, ContactoPaciente, Cita, NotaClinica, Auditoria |
-| Tablas ops | LogEvento, JobEjecucion, Migracion |
-| Semilla en schema | Solo roles y tipos de contacto |
+| Tablas ops | LogEvento, JobEjecucion, Migracion, Semilla |
+| Semilla en schema | Catálogos base (roles, tipos de contacto); datos de negocio los carga el job `seed/` |
 
 ---
 
@@ -51,57 +52,93 @@ Fuente de verdad del modelo: **`01_schema.sql`**. El ER en `esquema-er.md` está
 
 ## Hallazgos
 
-### 1. Máquina de estados incompleta en INSERT — severidad media-alta
+### Estado de los hallazgos anteriores
 
-`CitaValidarTransicion` solo corre en **UPDATE**. En **INSERT** se puede crear una cita ya en `atendida`, `ausente`, `cancelada` o `reprogramada`, saltándose RF13 (“desde reservada…”).
+Los puntos 1–5 de la revisión original ya están corregidos en el DDL actual de
+[`01_schema.sql`](../db/migrations/01_schema.sql). Se conservan a continuación
+como registro técnico, indicando en cada uno la resolución aplicada.
 
-**Corrección sugerida (cuando se toque el DDL):** en `prepararCita` (rama INSERT), forzar `estado = 'reservada'` o rechazar cualquier otro valor.
+### 1. Máquina de estados en INSERT — corregido
 
-### 2. RF10 (reprogramación) no garantizado en BD — severidad media
+**Observación original:** `CitaValidarTransicion` solo corría en UPDATE, por lo
+que en INSERT se podía insertar una cita en estado distinto a `reservada`.
 
-El diseño documentado (marcar origen como `reprogramada` + nueva fila con `citaOrigenId`) está reflejado en comentarios y en el bloqueo de mutar campos de scheduling, pero **nada impone** que ambas operaciones vayan juntas. Dos filas `reservada` o un origen sin sucesor son posibles si la API falla a mitad de camino.
+**Resolución:** la función `app."prepararCita"` rechaza explícitamente en su
+rama INSERT cualquier `estado` distinto de `reservada`:
 
-**Corrección sugerida:** SP `reprogramarCita(...)` en una sola transacción (patrón de Tarea 1: lógica en PostgreSQL). Opcional: trigger que, si hay `citaOrigenId`, exija que el origen pase a / esté en `reprogramada`.
+```sql
+IF NEW."estado" IS DISTINCT FROM 'reservada' THEN
+    RAISE EXCEPTION 'Una cita nueva debe crearse en estado reservada; se recibió %', NEW."estado";
+END IF;
+```
 
-### 3. Solapes en `HorarioAtencion` — severidad media
+Esto ancla RF13 en el motor y evita saltarse la máquina de estados.
 
-RF5 permite varios bloques por día (jornada partida), pero no dos bloques que se pisen. Hoy no hay exclusión sobre profesional + día + vigencia + rango horario.
+### 2. RF10 reprogramación atómica — corregido
 
-**Corrección sugerida:** `EXCLUDE` / trigger para horarios activos vigentes que se solapen el mismo día.
+**Observación original:** la reprogramación dependía de que la API ejecutara dos
+operaciones juntas.
 
-### 4. Especialidad del profesional vs del servicio — severidad media-baja
+**Resolución:** existe la función `app."reprogramarCita"(...)` que, dentro de la
+misma transacción, marca la cita origen como `reprogramada` e inserta la nueva
+cita con `citaOrigenId`. Si la nueva cita viola alguna restricción, PostgreSQL
+revierte también el cambio de la origen. Además, `app."validarCitaOrigen"`
+exige que `citaOrigenId` apunte a una cita en estado `reprogramada`.
 
-Al asociar `ProfesionalServicio` o al reservar, solo se valida la N:M. No se exige que `Servicio.especialidadId` coincida con `Profesional.especialidadId` (intención RF3 / RF4).
+### 3. Anti-solape en `HorarioAtencion` — corregido
 
-**Corrección sugerida:** trigger en `ProfesionalServicio` (y refuerzo opcional en `prepararCita`).
+**Observación original:** faltaba impedir que dos bloques activos del mismo
+profesional se solapen el mismo día.
 
-### 5. `Profesional.usuarioId` sin validar rol — severidad baja-media
+**Resolución:** se añadió la restricción `HorarioAtencionSinSolape`:
 
-La FK compuesta a `Usuario` de la misma clínica es correcta. No se exige que el usuario tenga rol `profesional`. Además, `modelo-datos.md` habla de enlace “opcional”; el SQL lo hace **obligatorio** (decisión válida, pero hay que documentarla).
+```sql
+EXCLUDE USING gist (
+    "clinicaId" WITH =,
+    "profesionalId" WITH =,
+    "diaSemana" WITH =,
+    tsrange(...) WITH &&,
+    daterange("vigenteDesde", "vigenteHasta", '[]') WITH &&
+) WHERE ("activo" = true);
+```
 
-**Corrección sugerida:** trigger al INSERT/UPDATE de `Profesional`; alinear el documento de modelo.
+### 4. Alineación de especialidad en `ProfesionalServicio` — corregido
 
-### 6. Documentación y naming desfasados — severidad baja (pega en defensa / avance)
+**Observación original:** no se exigía que el servicio asociado a un profesional
+fuera de su misma especialidad.
 
-| Fuente | Problema |
-|--------|----------|
-| `modelo-datos.md` | snake_case; roles con guion (`adm-plataforma`); contacto “en columnas”; Profesional opcional |
-| SQL / seed | códigos con guion bajo (`adm_plataforma`) |
-| `README.md` | aún dice que el esquema no existe |
-| Diccionario / justificación 3FN | pendiente (rúbrica “Modelo de datos”) |
+**Resolución:** el trigger `ProfesionalServicioValidarEspecialidad` ejecuta
+`app."validarEspecialidadProfesionalServicio"`, que compara
+`Profesional.especialidadId` con `Servicio.especialidadId` y rechaza la
+asociación si no coinciden. El trigger `CitaPreparar` refuerza la misma
+validación al reservar.
 
-No son bugs del DDL; conviene sincronizar docs antes del avance obligatorio.
+### 5. Validación de rol `profesional` al crear `Profesional` — corregido
 
-### 7. Fuera del error de modelo (trabajo pendiente del proyecto)
+**Observación original:** `Profesional.usuarioId` no validaba que el usuario
+tuviera rol `profesional`.
+
+**Resolución:** el trigger `ProfesionalValidarRol` ejecuta
+`app."validarRolProfesional"`, que verifica que el usuario exista, esté activo,
+pertenezca a la misma clínica y tenga rol `profesional`. El documento
+[`modelo-datos.md`](modelo-datos.md) refleja que el enlace es obligatorio.
+
+### 6. Documentación y naming — en proceso de sincronización
+
+| Fuente | Estado |
+|--------|--------|
+| `modelo-datos.md` | Actualizado: diccionario completo, justificación 1FN/2FN/3FN, semilla y roles con guion bajo |
+| SQL / seed | Roles con guion bajo (`adm_plataforma`); consistente |
+| `README.md` | Actualizado: ya no dice que el esquema no existe; `api/auth.go` ya implementa JWKS |
+
+### 7. Módulos pendientes en el momento de la revisión original — implementados
 
 | Ítem | Estado |
 |------|--------|
-| Semilla (≥3 clínicas, profesionales, citas) | Solo catálogos base en el SQL |
-| Roles de BD / GRANTs / RLS | Diferidos a propósito (comentario en L11 del schema) |
-| **I5** a nivel motor | Hoy depende de API + FKs compuestas; RLS es módulo opcional / posterior |
-| SPs de dominio (reserva, listados) | Aún no; Tarea 1 sí tenía este patrón |
-
-Estos puntos no invalidan el diagrama; son módulos 1, 2 y 5 de la spec todavía por completar.
+| Semilla (≥3 clínicas, profesionales, citas) | Implementada en [`seed/`](../seed/); 3 clínicas, 6 profesionales, 30 citas |
+| Roles de BD / GRANTs / RLS | Implementados en [`03_rls.sql`](../db/migrations/03_rls.sql) y [`04_db_roles_matrix.sql`](../db/migrations/04_db_roles_matrix.sql) |
+| **I5** a nivel motor | RLS habilitada; la API entra como `medicitas_app` y usa `SET ROLE` a perfiles de menor privilegio |
+| SP de reprogramación | Implementado en `app."reprogramarCita"` |
 
 ---
 
@@ -117,17 +154,29 @@ El modelo MediCitas ya es el adecuado para citas médicas multi-tenant.
 
 ---
 
-## Prioridad si más adelante se corrige el DDL
+## Prioridad si más adelante se evoluciona el DDL
 
-1. Forzar `estado = 'reservada'` en INSERT de `Cita`.
-2. SP (o constraint) de reprogramación atómica (RF10).
-3. Anti-solape en `HorarioAtencion`.
-4. Alineación de especialidad en `ProfesionalServicio`.
-5. Validar rol `profesional` al crear `Profesional`.
-6. Sincronizar `modelo-datos.md`, README y códigos de rol con el SQL.
+Los puntos críticos de la revisión original ya están resueltos. Las mejoras
+futuras podrían orientarse a:
+
+1. Endurecer el despliegue de Keycloak (service account dedicado en lugar de
+   admin master para provisionar usuarios).
+2. Agregar métricas y reintentos explícitos ante fallos de invalidación de Redis
+   (`ErrCacheInvalidation`).
+3. Evaluar single-flight en la caché de disponibilidad para reducir recálculos
+   concurrentes.
+4. Sincronizar periódicamente la documentación si el esquema sigue evolucionando.
 
 ---
 
 ## Conclusión
 
-Para el avance: el modelo **sostienen el dominio** y las invariantes centrales de agenda (I1, I2, I4, gran parte de I3/I6/I7) están ancladas en el motor. Los puntos a defender con honestidad son el INSERT de estados, RF10 aún en capa de aplicación, y que I5 / semilla / roles DB vienen después. No hace falta rediseñar el ER.
+El modelo **sostiene el dominio** y las invariantes centrales de agenda (I1, I2,
+I4, gran parte de I3/I6/I7/I8) están ancladas en el motor. Los hallazgos
+identificados en la revisión original ya fueron corregidos en el DDL: control
+de estados en INSERT, reprogramación atómica via SP, anti-solape de horarios,
+alineación de especialidad, validación de rol profesional, RLS, perfiles SQL y
+semilla multi-clínica. Los puntos a defender con honestidad ahora son el
+endurecimiento operativo (Keycloak service account, política ante fallo de
+invalidación de Redis) y la validación manual de las pruebas de integración en
+un entorno limpio. No hace falta rediseñar el ER.

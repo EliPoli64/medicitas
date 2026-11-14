@@ -22,7 +22,6 @@ La API orquesta; la clínica de dominio se resuelve en Postgres vía `"Usuario".
 
 ## Estado actual
 
-- Repo del grupo (`EliPoli64/medicitas`) con la spec, la documentación de trabajo y el esqueleto del proyecto.
 - **Base de datos implementada:** [`db/migrations/01_schema.sql`](db/migrations/01_schema.sql) crea las tablas de negocio, el esquema técnico `ops`, restricciones, índices y triggers. Incluye FKs compuestas por clínica, exclusiones de solapamiento, validación de horarios/bloqueos y la función transaccional `app."reprogramarCita"`. [`03_rls.sql`](db/migrations/03_rls.sql) añade RLS y el rol de conexión `medicitas_app`. [`04_db_roles_matrix.sql`](db/migrations/04_db_roles_matrix.sql) parte ese acceso en perfiles SQL de menor privilegio alineados con la matriz.
 - **Semilla implementada:** job Python one-shot en [`seed/`](seed/) que crea/verifica usuarios en Keycloak y carga clínicas, profesionales, pacientes y citas con fechas relativas a la ejecución. Corre automáticamente en `docker compose up`.
 - **Keycloak:** realm `medicitas` versionado en [`id-provider/import/medicitas-realm.json`](id-provider/import/medicitas-realm.json) (roles de la matriz, client `api`, claim `clinica_id`). Guía: [`docs/keycloak.md`](docs/keycloak.md).
@@ -309,7 +308,7 @@ Módulo extra (grupos de 3): **RLS como segunda estrategia**, encima de la colum
 
 ## Reuso de la Tarea Corta 1
 
-Compose, imagen Keycloak e idea de JWT ya están adaptados. Pendiente útil de TC1: rellenar `api/auth.go` (validación JWKS) cuando la API implemente RF17. No traer dominio `Reserva` ni `k8s/`.
+Compose, imagen Keycloak, idea de JWT y la validación JWKS en `api/auth.go` ya están adaptadas. No traer dominio `Reserva` ni `k8s/`.
 
 ## Documentación de trabajo
 
@@ -322,7 +321,9 @@ Compose, imagen Keycloak e idea de JWT ya están adaptados. Pendiente útil de T
 | [`docs/cache-disponibilidad.md`](docs/cache-disponibilidad.md) | Diseño, claves, invalidación y pruebas de la caché Redis |
 | [`docs/keycloak.md`](docs/keycloak.md) | Realm, roles, tokens, contrato seeder |
 | [`docs/division-trabajo.md`](docs/division-trabajo.md) | Matías / Cristian / Elías |
+| [`docs/informe-pruebas.md`](docs/informe-pruebas.md) | Trazabilidad RF/I ↔ pruebas, concurrencia, RLS y Redis |
 | [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md) | Mapa Compose + tabla de progreso RF |
+| [`docs/declaracion-ia.md`](docs/declaracion-ia.md) | Declaración de uso de inteligencia artificial |
 
 ## Pregunta rectora (defensa)
 

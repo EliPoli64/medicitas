@@ -63,7 +63,18 @@ die()     { printf '%sERROR:%s %s\n' "$C_BAD" "$C_OFF" "$1"; exit "${2:-2}"; }
 command -v jq  >/dev/null 2>&1 || die "falta jq en el host" 3
 command -v curl >/dev/null 2>&1 || die "falta curl en el host" 3
 
-TMP="$(mktemp -d /tmp/opencode/e2e-smoke.XXXXXX)"
+# Directorio temporal portable: respeta TMPDIR/TEMP y cae en /tmp si no existe.
+if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+  TMP_BASE="$TMPDIR"
+elif [ -n "${TEMP:-}" ] && [ -d "$TEMP" ]; then
+  TMP_BASE="$TEMP"
+else
+  TMP_BASE="/tmp"
+  [ -d "$TMP_BASE" ] || mkdir -p "$TMP_BASE" 2>/dev/null || die "no se pudo crear directorio temporal base: $TMP_BASE" 3
+fi
+TMP="$(mktemp -d "$TMP_BASE/e2e-smoke.XXXXXX" 2>/dev/null)" \
+  || TMP="$(mktemp -d 2>/dev/null)" \
+  || die "no se pudo crear directorio temporal" 3
 BODY_FILE="$TMP/respuesta.json"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -161,16 +172,21 @@ U_ADM_B="adme2eb${SUF}"
 U_REC="rece2e${SUF}"
 U_DR="dre2e${SUF}"
 U_DR2="dre2eb${SUF}"
-LUNES=$(TZ=$TZCLINICA date -d 'next monday' +%F)
+# Próximo lunes portable (funciona con GNU date y MSYS2/Git Bash).
+# El formato se coloca antes de -d porque algunos date (MSYS2) lo ignoran si va después.
+DOW_LUNES=$(TZ=$TZCLINICA date +%u)
+DELTA_LUNES=$(( (8 - DOW_LUNES) % 7 ))
+[ "$DELTA_LUNES" -eq 0 ] && DELTA_LUNES=7
+LUNES=$(TZ=$TZCLINICA date +%F -d "+$DELTA_LUNES days")
 HOY=$(TZ=$TZCLINICA date +%F)
-ts() { TZ=$TZCLINICA date -d "$LUNES $1" +%Y-%m-%dT%H:%M:%S%:z; }
+ts() { TZ=$TZCLINICA date +%Y-%m-%dT%H:%M:%S%:z -d "$LUNES $1"; }
 
 # --- fase 1: identidad RF17 -------------------------------------------------
 section "Fase 1 — identidad y permisos (RF17)"
 req GET /pacientes
 want_status "sin token" 401
 need_tok TOK_REC recep-norte recep123
-need_tok TOK_ADM_DEMO adm-oeste oeste12345
+
 
 req GET /pacientes "$TOK_PLAT"
 want_status "adm-plataforma sobre /pacientes (rol equivocado)" 403
@@ -448,8 +464,8 @@ want_status "RF14 agregar contacto (escritura auditada)" 201
 # como el test de integración) y se registra el desenlace vía API.
 DOW=$(TZ=$TZCLINICA date +%u)
 BACK=$((DOW - 1)); [ "$BACK" -eq 0 ] && BACK=7
-PASADO=$(TZ=$TZCLINICA date -d "$BACK days ago" +%F)
-[ "$(TZ=$TZCLINICA date -d "$PASADO" +%u)" = 1 ] && ok "PASADO cae en lunes ($PASADO)" \
+PASADO=$(TZ=$TZCLINICA date +%F -d "$BACK days ago")
+[ "$(TZ=$TZCLINICA date +%u -d "$PASADO")" = 1 ] && ok "PASADO cae en lunes ($PASADO)" \
   || nok "PASADO no es lunes" "$PASADO"
 PASTA_RAW=$(psqlq "INSERT INTO \"Cita\" (\"clinicaId\", \"pacienteId\", \"profesionalId\", \"servicioId\", \"inicio\")
   SELECT c.\"id\", '$PAC_A', '$PROF1', '$SVC', ('$PASADO 09:00'::timestamp AT TIME ZONE c.\"zonaHoraria\")
