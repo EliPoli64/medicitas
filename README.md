@@ -247,6 +247,44 @@ Permiso (extensión documentada de la matriz): **`adm-clinica`**, **`recepcion`*
 
 Colección: [`docs/http/operacion.http`](docs/http/operacion.http). Arquitectura: [`docs/arquitectura-etapa1.md`](docs/arquitectura-etapa1.md).
 
+## Pruebas
+
+Un solo comando por suite, sin pasos intermedios y sin preparación manual de datos (§6.4): cada prueba crea sus propias fixtures con sufijo único, así que las suites son idempotentes y no ensucian la semilla. Los comandos se ejecutan desde [`api/`](api/) (ahí vive el módulo Go):
+
+```bash
+cd api
+
+# Unitarias (sin Docker): aíslan la lógica con stores falsos
+go test ./...
+
+# Integración contra la pila real (requiere docker compose up ya levantado)
+go test -tags=integration ./...
+```
+
+Sin Go instalado en el host, el mismo resultado desde la raíz del repo con el contenedor oficial:
+
+```bash
+docker run --rm -v "$PWD/api:/src:z" -w /src golang:1.25-alpine go test ./...
+docker run --rm --network host -v "$PWD/api:/src:z" -w /src golang:1.25-alpine go test -tags=integration ./...
+```
+
+Al menos una prueba por cada invariante (§5.8):
+
+| Invariante | Prueba |
+|---|---|
+| **I1** — sin solape de profesional | `TestIntegrationRF9CarreraUnaGanadora`, `TestIntegrationRF9ReservarCita` |
+| **I2** — sin solape de paciente | `TestIntegrationI2PacienteSinSolape` |
+| **I3** — dentro de horario y fuera de bloqueos | `TestIntegrationI3DentroDeHorarioYBloqueo` |
+| **I4** — la duración la fija el servicio | `TestIntegrationRF10a13CicloCita` (crear y reprogramar) |
+| **I5** — aislamiento entre clínicas | `TestIntegrationRLS`, `Test*IgnoresQuery*` (unitarias), `?pacienteId=` cruzado en `TestIntegrationRF15RF18RF19NotasBitacora` |
+| **I6** — bitácora append-only | `TestIntegrationRF15RF18RF19NotasBitacora` (subtests I6: `UPDATE`/`DELETE`/`TRUNCATE` rechazados) |
+| **I7** — liberación inmediata del espacio | `TestIntegrationRF10a13CicloCita`, `TestIntegrationRF7RF8Disponibilidad` |
+| **I8** — la caché no contradice la BD | `TestIntegrationRF9I8ConsultarReservarConsultar`, `TestIntegrationRF7Cache_*` |
+
+La prueba de carrera (§5.3 / §7.6) es `TestIntegrationRF9CarreraUnaGanadora`: clientes concurrentes compiten por el último espacio y sale **exactamente una** reserva concedida, sin duplicados ni violación de I1.
+
+Para probar la API a mano: colecciones [`docs/http/`](docs/http/) una por requisito, con casos negativos incluidos.
+
 ## División del trabajo
 
 | Quién | Encargo |
