@@ -283,6 +283,16 @@ Al menos una prueba por cada invariante (§5.8):
 
 La prueba de carrera (§5.3 / §7.6) es `TestIntegrationRF9CarreraUnaGanadora`: clientes concurrentes compiten por el último espacio y sale **exactamente una** reserva concedida, sin duplicados ni violación de I1.
 
+Para verificar el sistema completo de punta a punta con un solo comando (§7.7):
+
+```bash
+./scripts/e2e-smoke.sh            # requiere la pila arriba (docker compose up)
+./scripts/e2e-smoke.sh --up       # además levanta/reconstruye la pila y espera /ready
+./scripts/e2e-smoke.sh --with-go  # añade go test unit + integración al final
+```
+
+El script recorre en 12 fases identidad (RF17), aislamiento I5, catálogo RF2–RF4, horarios/bloqueos RF5–RF6, disponibilidad RF7–RF8, ciclo de cita RF9–RF13 con I1–I4 e I7, la carrera concurrente por el último espacio, I8 con caché Redis, pacientes/notas/bitácora RF14–RF19 con I6 vía `psql`, conteos RF20–RF21 y la matriz de roles SQL (§5.5). Termina con resumen PASS/FAIL (exit 0/1); cada corrida crea clínicas con sufijo único y las elimina al final (`--keep` para conservarlas).
+
 Para probar la API a mano: colecciones [`docs/http/`](docs/http/) una por requisito, con casos negativos incluidos.
 
 ## División del trabajo
