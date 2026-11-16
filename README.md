@@ -1,5 +1,13 @@
 # MediCitas — Etapa 1 (OLTP)
 
+Proyecto del curso de Arquitectura e Ingeniería de Datos (Bases de Datos 2)  
+
+Integrantes: 
+
+- **Matías Benavides Sandoval**  
+- **Cristian Borbon Martínez**  
+- **Elías Ramírez Hernández**  
+
 Plataforma SaaS multi-tenant de gestión de citas médicas (Arquitectura e Ingeniería de Datos, TEC).
 
 Núcleo transaccional: API REST **sin interfaz gráfica**, clínicas aisladas, agenda, ciclo de vida de la cita, identidad en Keycloak y caché de disponibilidad en Redis.
